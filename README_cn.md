@@ -100,9 +100,18 @@ def predict(self, x_train:np.ndarray, y_train:np.ndarray, x_test:np.ndarray) -> 
 | y_train  | np.ndarray  | 训练集的预测目标   |
 | x_test   | np.ndarray  | 测试集的 feature   |
 
+## ➩ 推理配置文件说明
+| 配置文件名称 | 配置文件说明 | 差异 |
+| ------- | ---------- | ----- |
+| cls_default_retrieval.json | 默认的**含有retrieval**功能的**分类任务**推理配置文件 | 分类性能更好 |
+| cls_default_noretrieval.json | 默认的**不含有retrieval**功能的**分类任务**推理配置文件 | 速度更快、显存需求更低 |
+| reg_default_retrieval.json | 默认的**含有retrieval**功能的**回归任务**推理配置文件 | 回归性能更好 |
+| reg_default_noretrieval.json | 默认的**不含有retrieval**功能的**回归任务**推理配置文件 | 速度更快、显存需求更低 |
+| reg_default_noretrieval_MVI.json | 默认的**缺失值插补**任务推理配置文件 |  |
+
 ## ➩ 基于样本检索的ensemble推理
 基于样本检索的ensemble推理的详细技术描述详见[LimiX技术报告](https://github.com/limix-ldm/LimiX/blob/main/LimiX_Technical_Report.pdf)
-考虑到推理速度，基于样本检索的ensemble推理目前只支持基于版本高于NVIDIA-RTX 4090显卡的硬件条件。
+考虑到推理速度、显存占用，基于样本检索的ensemble推理目前只支持基于版本高于NVIDIA-RTX 4090显卡的硬件条件。
 ### 分类任务
 ```
 torchrun --nproc_per_node=8 inference_classifier.py --save_name your_save_name --inference_config_path path_to_config --data_dir path_to_data
@@ -159,7 +168,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5, random_
 
 model_file = hf_hub_download(repo_id="stableai-org/LimiX-16M", filename="LimiX-16M.ckpt", local_dir="./cache")
 
-clf = LimiXPredictor(device='cuda', model_path=model_file, inference_config='config/cls_default_noretrieval.json')
+clf = LimiXPredictor(device='cuda', model_path=model_file, inference_config='config/cls_default_retrieval.json')
 prediction = clf.predict(X_train, y_train, X_test)
 
 print("roc_auc_score:", roc_auc_score(y_test, prediction[:, 1]))
@@ -198,7 +207,7 @@ y_test_normalized = (y_test - y_mean) / y_std
 data_device = f'cuda:0'
 model_path = hf_hub_download(repo_id="stableai-org/LimiX-16M", filename="LimiX-16M.ckpt", local_dir="./cache")
 
-model = LimiXPredictor(device='cuda', model_path=model_path, inference_config='config/reg_default_noretrieval.json')
+model = LimiXPredictor(device='cuda', model_path=model_path, inference_config='config/reg_default_retrieval.json')
 y_pred = model.predict(X_train, y_train_normalized, X_test)    
 
 # Compute RMSE and R²

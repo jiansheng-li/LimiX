@@ -107,11 +107,20 @@ def predict(self, x_train:np.ndarray, y_train:np.ndarray, x_test:np.ndarray) -> 
 | y_train  | np.ndarray  | The target variable of the training set   |
 | x_test   | np.ndarray  | The input features of the test set   |
 
+## Inference Configuration File Description
+| Configuration File Name | Description | Difference |
+| ------- | ---------- | ----- |
+| cls_default_retrieval.json | Default **classification task** inference configuration file **with retrieval** | Better classification performance |
+| cls_default_noretrieval.json | Default **classification task** inference configuration file **without retrieval** | Faster speed, lower memory requirements |
+| reg_default_retrieval.json | Default **regression task** inference configuration file **with retrieval** | Better regression performance |
+| reg_default_noretrieval.json | Default **regression task** inference configuration file **without retrieval** | Faster speed, lower memory requirements |
+| reg_default_noretrieval_MVI.json | Default inference configuration file for **missing value imputation task** |  |
+
 ## ➩ Ensemble Inference Based on Sample Retrieval
 
 For a detailed technical introduction to Ensemble Inference Based on Sample Retrieval, please refer to the [technical report](https://github.com/limix-ldm/LimiX/blob/main/LimiX_Technical_Report.pdf).
 
-Considering inference speed, ensemble inference based on sample retrieval currently only supports hardware with specifications higher than the NVIDIA RTX 4090 GPU.
+Considering inference speed and memory requirements, ensemble inference based on sample retrieval currently only supports hardware with specifications higher than the NVIDIA RTX 4090 GPU.
 
 ### Classification Task
 
@@ -177,7 +186,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5, random_
 
 model_file = hf_hub_download(repo_id="stableai-org/LimiX-16M", filename="LimiX-16M.ckpt", local_dir="./cache")
 
-clf = LimiXPredictor(device='cuda', model_path=model_file, inference_config='config/cls_default_noretrieval.json')
+clf = LimiXPredictor(device='cuda', model_path=model_file, inference_config='config/cls_default_retrieval.json')
 prediction = clf.predict(X_train, y_train, X_test)
 
 print("roc_auc_score:", roc_auc_score(y_test, prediction[:, 1]))
@@ -215,7 +224,7 @@ y_test_normalized = (y_test - y_mean) / y_std
 
 model_path = hf_hub_download(repo_id="stableai-org/LimiX-16M", filename="LimiX-16M.ckpt", local_dir="./cache")
 
-model = LimiXPredictor(device='cuda', model_path=model_path, inference_config='config/reg_default_noretrieval.json')
+model = LimiXPredictor(device='cuda', model_path=model_path, inference_config='config/reg_default_retrieval.json')
 y_pred = model.predict(X_train, y_train_normalized, X_test)    
 
 # Compute RMSE and R²
