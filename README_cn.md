@@ -224,3 +224,11 @@ print(f'R2: {r2}')
 本仓库的代码依照 [Apache-2.0](LICENSE.txt) 协议开源，LimiX 模型的权重的使用则需要遵循 Model License。LimiX 权重对学术研究完全开放，在进行授权后允许商业使用。
 
 # ➤ 引用
+```
+@article{LimiX,
+  title={LimiX:Unleashing Structured-Data Modeling Capability for Generalist Intelligence},
+  author={LimiXTeam},
+  journal={arXiv preprint arXiv:2509.03505},
+  year={2025}
+}
+```

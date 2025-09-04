@@ -240,4 +240,12 @@ For the demo file, see [examples/demo_missing_value_imputation.py](examples/infe
 # ➤ License
 The code in this repository is open-sourced under the [Apache-2.0](LICENSE.txt) license, while the usage of the LimiX model weights is subject to the Model License. The LimiX weights are fully available for academic research and may be used commercially upon obtaining proper authorization.
 
-# ➤ Reference
+# ➤ Citation
+```
+@article{LimiX,
+  title={LimiX:Unleashing Structured-Data Modeling Capability for Generalist Intelligence},
+  author={LimiXTeam},
+  journal={arXiv preprint arXiv:2509.03505},
+  year={2025}
+}
+```
