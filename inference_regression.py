@@ -65,7 +65,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run LimiX inference')
     parser.add_argument('--data_dir', type=str, default=None, help='Specify the local storage directory of the dataset')
     parser.add_argument('--save_name', default=None, type=str, help="path to save result")
-    parser.add_argument('--inference_config_path', type=str,required=True, help="path to example config")
+    parser.add_argument('--inference_config_path', type=str, default="./config/reg_default_retrieval.json", help="path to example config")
     parser.add_argument('--model_path',type=str, default=None, help="path to you model")
     parser.add_argument('--inference_with_DDP', default=False, action='store_true', help="Inference with DDP")
     parser.add_argument('--debug', default=False, action='store_true', help="debug mode")
