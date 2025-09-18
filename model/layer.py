@@ -278,9 +278,7 @@ class EncoderBaseLayer(nn.Module):
         self.feature_attentions = []
         self.sequence_attentions = []
         self.mlp = []
-        self.feature_attn_num = 1           # feature attention number
         self.items_attn_num = 1             # items attention number
-        self.mlp_num = 1                    # mlp number
         self.calculate_sample_attention = calculate_sample_attention
         self.calculate_feature_attention = calculate_feature_attention
         self.feature_attn_num = 2
