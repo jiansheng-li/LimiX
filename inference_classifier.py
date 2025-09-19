@@ -18,7 +18,7 @@ from sklearn.metrics import accuracy_score, f1_score, log_loss
 from sklearn.metrics import roc_auc_score
 from pathlib import Path
 import torch.distributed as dist
-from utils.inference_utils import  generate_infenerce_config
+from utils.inference_utils import  generate_infenerce_config, sample_inferece_params
 
 os.environ['HF_ENDPOINT']="https://hf-mirror.com"
 from utils.utils import  download_datset, download_model
@@ -74,6 +74,60 @@ def compute_ece(y_true, y_prob, n_bins=10):
             ece += np.abs(acc_in_bin - avg_conf_in_bin) * prop_in_bin
     return ece
 
+def inference_dataset(classifier, le, scaler, X_train, y_train, X_test, y_test):
+    for col in X_train.columns:
+        if X_train[col].dtype == 'object':  # Check whether it is a string column.
+            try:
+                le = LabelEncoder()
+                X_train[col] = le.fit_transform(X_train[col])
+                X_test[col] = le.transform(X_test[col])
+            except Exception as e:
+                X_train = X_train.drop(columns=[col])
+                X_test = X_test.drop(columns=[col])
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
+
+    y_train = le.fit_transform(y_train)
+    y_test = le.transform(y_test) 
+    num_classes = len(le.classes_)
+
+    trainX, trainy = X_train, y_train
+    
+    trainX = np.asarray(trainX, dtype=np.float32)
+    trainy = np.asarray(trainy, dtype=np.int64)
+    
+    # Datasets with too many or too few categories are not supported yet
+    if len(np.unique(trainy)) > 10 or len(np.unique(trainy)) < 2:
+        return None, None, None
+    # When seq_len is greater than 50,000, skip due to GPU memory limitations
+    if len(trainX) >= 50000:
+        return None, None, None
+    
+    testX, testy = X_test, y_test
+    testX = np.asarray(testX, dtype=np.float32)
+    testy = np.asarray(testy, dtype=np.int64)
+
+    prediction_ = classifier.predict(trainX, trainy, testX, task_type="Classification")
+    prediction_label = np.argmax(prediction_, axis=1)
+    
+    roc = auc_metric(testy, prediction_)
+    acc = accuracy_score(testy, prediction_label)
+    f1 = f1_score(testy, prediction_label, average='macro' if num_classes > 2 else 'binary')
+    ce = log_loss(testy, prediction_)
+    ece = compute_ece(testy, prediction_, n_bins=10)
+
+    rst = {
+            'num_data_train': len(trainX),
+            'num_data_test': len(testX),
+            'num_feat': len(trainX[0]), 
+            'num_class': len(np.unique(trainy)),
+            'acc': float(acc),
+            'f1': float(f1),
+            'logloss': float(ce),
+            'ece': float(ece),
+            'auc': float(roc),
+        }
+    return rst,prediction_,testy
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run LimiX inference')
@@ -83,10 +137,12 @@ if __name__ == '__main__':
     parser.add_argument('--model_path',type=str, default=None, help="path to you model")
     parser.add_argument('--inference_with_DDP', default=False, action='store_true', help="Inference with DDP")
     parser.add_argument('--debug', default=False, action='store_true', help="debug mode")
+    parser.add_argument('--search_space_sample_num', type=int, default=0, help="number of samples to search in the search space")
     args = parser.parse_args()
 
     model_file = args.model_path
     data_root = args.data_dir
+    search_space_sample_num = args.search_space_sample_num
     
     if data_root is None:
         download_datset(repo_id="stableai-org/bcco_cls", revision="main", save_dir="./cache")
@@ -116,11 +172,12 @@ if __name__ == '__main__':
     scaler = MinMaxScaler()
     le = LabelEncoder()
 
+    rng = np.random.default_rng(42)
 
     classifier = LimiXPredictor(device=torch.device("cuda" if torch.cuda.is_available() else "cpu"), model_path=model_file,inference_config=inference_config,
-                               inference_with_DDP=args.inference_with_DDP,task_type="Classification")
-    
+                               inference_with_DDP=args.inference_with_DDP)
     rsts = []
+    aucs = {}
     # Iterate through all datasets and perform inference
     for idx, folder in tqdm(enumerate(os.listdir(data_root))):
         X_train, X_test, y_train, y_test = None, None, None, None
@@ -128,7 +185,6 @@ if __name__ == '__main__':
         
         if os.path.isfile(folder_path):
             continue
-
         try:
             # start_time_pre = time.time()
             train_path = os.path.join(folder_path, folder+'_train.csv')
@@ -150,63 +206,39 @@ if __name__ == '__main__':
             X_test = test_df.iloc[:, :-1]
             y_test = test_df.iloc[:, -1]
 
-            for col in X_train.columns:
-                if X_train[col].dtype == 'object':  # Check whether it is a string column.
-                    try:
-                        le = LabelEncoder()
-                        X_train[col] = le.fit_transform(X_train[col])
-                        X_test[col] = le.transform(X_test[col])
-                    except Exception as e:
-                        X_train = X_train.drop(columns=[col])
-                        X_test = X_test.drop(columns=[col])
-            X_train = scaler.fit_transform(X_train)
-            X_test = scaler.transform(X_test)
+            sample_index = 0
+            aucs['dataset'] = folder
+            aucs['default_auc'] = 0
+            aucs['sample_auc'] = []
+            while sample_index == 0 or sample_index < search_space_sample_num:
+                if search_space_sample_num > 0:
+                    if sample_index > 0:
+                        hyperopt_config, base_config = sample_inferece_params(rng, 2, 2)
+                        classifier.set_inference_config(inference_config=hyperopt_config, **base_config)
+                        print(f"{sample_index}/{search_space_sample_num}", end="\r")
+                    else:
+                        classifier.set_inference_config(inference_config, 0.9, 0)
 
-            y_train = le.fit_transform(y_train)
-            y_test = le.transform(y_test) 
-            num_classes = len(le.classes_)
+                try:
+                    rst, prediction_,testy = inference_dataset(classifier, le, scaler, X_train.copy(), y_train.copy(), X_test.copy(), y_test.copy())
+                    assert rst is not None, f'Error processing {folder} with sample_index {sample_index}: rst is None. seq_len({len(X_train)}) is greater than 50,000, skip due to GPU memory limitations'
+                except Exception as e:
+                    print(f"Error processing {folder} with sample_index {sample_index}: {e}")
+                    sample_index += 1
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    continue
+                
+                class_num = prediction_.shape[1]
+                rst['dataset name'] = folder
+                rst['search_space_sample_index'] = sample_index
+                if sample_index == 0:
+                    aucs['default_auc'] = rst['auc']
+                aucs['sample_auc'].append(rst['auc'])
 
-            trainX, trainy = X_train, y_train
-            
-            trainX = np.asarray(trainX, dtype=np.float32)
-            trainy = np.asarray(trainy, dtype=np.int64)
-            
-            # Datasets with too many or too few categories are not supported yet
-            if len(np.unique(trainy)) > 10 or len(np.unique(trainy)) < 2:
-                continue
-            # When seq_len is greater than 50,000, skip due to GPU memory limitations
-            if len(trainX) >= 50000:
-                continue
-            
-            testX, testy = X_test, y_test
-            testX = np.asarray(testX, dtype=np.float32)
-            testy = np.asarray(testy, dtype=np.int64)
+                sample_index += 1
 
-            rst = {
-                'dataset name': folder,
-                'num_data_train': len(trainX),
-                'num_data_test': len(testX),
-                'num_feat': len(trainX[0]), 
-                'num_class': len(np.unique(trainy)),
-            }
-
-            prediction_ = classifier.predict(trainX, trainy, testX)
-            prediction_label = np.argmax(prediction_, axis=1)
-            class_num = prediction_.shape[1]
-            roc = auc_metric(testy, prediction_)
-            
-            acc = accuracy_score(testy, prediction_label)
-            f1 = f1_score(testy, prediction_label, average='macro' if num_classes > 2 else 'binary')
-            ce = log_loss(testy, prediction_)
-
-            ece = compute_ece(testy, prediction_, n_bins=10)
-            if not(int(os.environ.get('WORLD_SIZE', -1))>0 and dist.get_rank() != 0):
-                    rst['acc'] = float(acc)
-                    rst['f1'] = float(f1)
-                    rst['logloss'] = float(ce)
-                    rst['ece'] = float(ece)
-                    rst['auc'] = float(roc)
-
+                if not(int(os.environ.get('WORLD_SIZE', -1)) > 0 and dist.get_rank() != 0):
                     output_df = {'label':testy}
                     for i in range(class_num):
                         output_df[f'pred_{i}'] = prediction_[:,i]
@@ -214,9 +246,13 @@ if __name__ == '__main__':
                     del prediction_
 
                     rsts.append(rst)
-                    if args.debug:
+                    if args.debug and search_space_sample_num <= 0:
                         print(f"[{idx}] {folder} -> {rst['auc']}")
             
+            if args.debug and search_space_sample_num > 0 and len(aucs['sample_auc']) > 0:
+                aucs_list = np.array(aucs['sample_auc'], dtype=float)
+                print(f"[{idx}] {folder} -> default_auc: {aucs['default_auc']:.6f}, sample_auc: max: {np.max(aucs_list):.6f}, mean: {np.mean(aucs_list):.6f},  min: {np.min(aucs_list):.6f}")
+
         except Exception as e:
             print(f"Error processing: {e}")
             gc.collect()

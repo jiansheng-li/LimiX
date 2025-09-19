@@ -119,7 +119,7 @@ model_path = hf_hub_download(repo_id="stableai-org/LimiX-16M", filename="LimiX-1
 testX, testX_original, nan_mask = gen_nan(X_test, 0.3)
 
 model = LimiXPredictor(device=torch.device(data_device), model_path=model_path, mask_prediction=True, inference_config="./config/reg_default_noretrieval_MVI.json")
-y_pred, reconstructed_X = model.predict(X_train, y_train, X_test)
+y_pred, reconstructed_X = model.predict(X_train, y_train, X_test, task_type="Regression")
 mask_prediction_ = reconstructed_X[-X_test.shape[0]:].astype(X_test.dtype)
 
 mask_pred_cls_error, mask_pred_reg_error = mask_prediction_eval(mask_prediction_, testX_original, nan_mask, categories)

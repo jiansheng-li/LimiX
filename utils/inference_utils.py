@@ -159,6 +159,80 @@ def generate_infenerce_config(args):
         json.dump(config_list, f)
 
 
+def sample_inferece_params(rng:np.random.Generator, sample_num:int=2, repeat_num:int=2):
+    from hyperopt import hp
+    from hyperopt.pyll import stochastic
+
+    search_space = {
+        "RebalanceFeatureDistribution":{
+            "worker_tags": hp.choice("worker_tags", [["logNormal"], 
+                                                     ["quantile_uniform_10"],
+                                                     ["quantile_uniform_5"],
+                                                     ["quantile_uniform_all_data"],
+                                                     ["power"],
+                                                     ["quantile_norm_10"],
+                                                     ["quantile_norm_5"],
+                                                     ["quantile_norm_all_data"],
+                                                     ["norm_and_kdi"],
+                                                     ["none"],
+                                                     ["robust"],
+                                                     ["kdi_uni"],
+                                                     ["kdi_alpha_0.3"],
+                                                     ["kdi_alpha_3.0"],
+                                                     ["kdi_norm"],
+                                                     ["power", "quantile_uniform_5"],
+                                                     ["kdi", "quantile_uniform_5"]]),
+            "discrete_flag": hp.choice("discrete_flag", [True, False]),
+            "original_flag": hp.choice("original_flag", [True, False]),
+            "svd_tag": hp.choice("svd_tag", ["svd", None])
+        },
+
+        "CategoricalFeatureEncoder": {
+            "encoding_strategy": hp.choice("encoding_strategy", ["ordinal_strict_feature_shuffled", 
+                                                                 "ordinal",
+                                                                 "ordinal_strict_feature_shuffled",
+                                                                 "ordinal_shuffled",
+                                                                 "onehot",
+                                                                 "numeric",
+                                                                 "none",]),
+        },
+        "FeatureShuffler": {
+            "mode": hp.choice("mode", ["shuffle", "rotate"])
+        },
+        "FingerprintFeatureEncoder": hp.choice("FingerprintFeatureEncoder", [True, False]),
+        "PolynomialInteractionGenerator":{
+            "max_interaction_features": hp.choice("max_interaction_features", [None, 50])
+        },
+        "retrieval_config": {
+            "use_retrieval": False,
+            "retrieval_before_preprocessing": False,
+            "calculate_feature_attention": False,
+            "calculate_sample_attention": False,
+            "subsample_ratio": 0.7,
+            "subsample_type": "sample",
+            "use_type": "mixed"
+        }
+    }
+    if rng.random() > 0.5:
+        search_space["PolynomialInteractionGenerator"] = {
+            "max_interaction_features": hp.choice("max_interaction_features", [None, 50])
+        }
+    
+    base_search_space = {
+        "softmax_temperature": hp.choice("softmax_temperature", [0.75, 0.8, 0.9, 0.95, 1.0]),
+        "seed": hp.uniformint("seed", 0, 1000000)
+    }
+
+    hyperopt_configs = []
+    for _ in range(sample_num):
+        config = stochastic.sample(search_space, rng=rng)
+        for _ in range(repeat_num):
+            hyperopt_configs.append(config)
+
+    base_config = stochastic.sample(base_search_space, rng=rng)
+
+    return hyperopt_configs, base_config
+
 class NonPaddingDistributedSampler(DistributedSampler):
     def __init__(self, dataset, num_replicas=None, rank=None, shuffle=False):
         super().__init__(dataset, num_replicas=num_replicas, rank=rank, shuffle=shuffle)

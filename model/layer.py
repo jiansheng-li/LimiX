@@ -211,7 +211,7 @@ class MultiheadAttention(torch.nn.Module):
             else:
                 kv = torch.einsum("... s, j h d s -> ... j h d", x_kv, self.kv_proj_weight)
                 
-        if attn_mask is None and HAVE_FLASH_ATTN:
+        if attn_mask is None and HAVE_FLASH_ATTN and self.qkv_proj_weight.device == torch.device("cuda"):
             atten_out = self.compute_attention_by_flashattn(qkv, q, kv)
         else:
             atten_out = self.compute_attention_by_torch(qkv, q, kv, attn_mask)

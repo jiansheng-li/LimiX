@@ -4,6 +4,8 @@ from inference.preprocess import (
     FilterValidFeatures, 
     CategoricalFeatureEncoder, 
     RebalanceFeatureDistribution, 
+    FingerprintFeatureEncoder,
+    PolynomialInteractionGenerator,
     SubSampleData)
 from utils.loading import load_model
 import torch
@@ -32,7 +34,7 @@ class LimiXPredictor:
                  mix_precision:bool=True,
                  outlier_remove_std: float=12,
                  softmax_temperature:float=0.9,
-                 task_type: Literal['Classification', 'Regression']='Classification',
+                #  task_type: Literal['Classification', 'Regression']='Classification',
                  mask_prediction:bool=False,
                  categorical_features_indices:List[int]|None=None,
                  inference_with_DDP: bool = False,
@@ -74,25 +76,49 @@ class LimiXPredictor:
         self.min_seq_len_for_category_infer = 100
         self.max_unique_num_for_category_infer = 30
         self.min_unique_num_for_numerical_infer = 4
-        self.preprocess_num = 4
+        self.preprocess_num = 10
         self.softmax_temperature = softmax_temperature
-        self.task_type = task_type
+        # self.task_type = task_type
         self.mask_prediction = mask_prediction        
         self.inference_with_DDP=inference_with_DDP
         self.model=load_model(model_path=model_path,mask_prediction=mask_prediction)
-        
+
         self.preprocess_pipelines = []
         self.preprocess_configs = []
+
+        self.build_preprocess_pipeline()
+
+    def set_inference_config(self, inference_config: list|str, softmax_temperature:float|None=None, seed:int|None=None):
+        if isinstance(inference_config, str):
+            if os.path.isfile(inference_config):
+                with open(inference_config, 'r') as f:
+                    inference_config = json.load(f)
+            else:
+                raise ValueError(f"inference_config is not a config file path: {inference_config}")
+        self.inference_config = inference_config
+        n_estimators = len(inference_config)
+        assert n_estimators > 0, f"Invalid configuration file! the number of pipelines is 0!"
+        self.n_estimators = n_estimators
         
-        random.seed(seed)
-        rand_gen = np.random.default_rng(seed)
-        self.seeds = [random.randint(0, 10000) for _ in range(n_estimators*self.preprocess_num)]
+        if softmax_temperature is not None:
+            self.softmax_temperature = softmax_temperature
+        if seed is not None:
+            self.seed = seed
+        self.build_preprocess_pipeline()
+
+    def build_preprocess_pipeline(self):
+        self.preprocess_pipelines = []
+        self.preprocess_configs = []
+    
+        random.seed(self.seed)
+        rand_gen = np.random.default_rng(self.seed)
+        self.seeds = [random.randint(0, 10000) for _ in range(self.n_estimators*self.preprocess_num)]
         start_idx = rand_gen.integers(0, 1000)
-        all_shifts = list(range(start_idx, start_idx + n_estimators))
-        self.all_shifts = rand_gen.choice(all_shifts, size=n_estimators, replace=False)
-        
+        all_shifts = list(range(start_idx, start_idx + self.n_estimators))
+        self.all_shifts = rand_gen.choice(all_shifts, size=self.n_estimators, replace=False)
+    
         if self.mask_prediction:
-            for inference_config_item in inference_config:
+            for inference_config_item in self.inference_config:
                 if len(inference_config_item['RebalanceFeatureDistribution']['worker_tags']) > 0:
                     for i, v in enumerate(inference_config_item['RebalanceFeatureDistribution']['worker_tags']):
                         if v == 'power':
@@ -101,9 +127,9 @@ class LimiXPredictor:
                             inference_config_item['RebalanceFeatureDistribution']['worker_tags'].append(None)
                 inference_config_item['RebalanceFeatureDistribution']['discrete_flag'] = True
 
-        for idx in range(n_estimators):
+        for idx in range(self.n_estimators):
             pipeline = []
-            inference_config_item = inference_config[idx]
+            inference_config_item = self.inference_config[idx]
             retrieval_config = inference_config_item["retrieval_config"]
             if retrieval_config["use_retrieval"] and retrieval_config["retrieval_before_preprocessing"]:
                 if retrieval_config["subsample_type"] == "sample":
@@ -116,15 +142,25 @@ class LimiXPredictor:
                     assert retrieval_config[
                         "calculate_feature_attention"], "Retrieval on sample level must calculate feature attention score before."
                 pipeline.append(
-                    InferenceAttentionMap(model_path, retrieval_config["calculate_feature_attention"],
+                    InferenceAttentionMap(self.model_path, retrieval_config["calculate_feature_attention"],
                                           retrieval_config["calculate_sample_attention"]))
                 pipeline.append(SubSampleData(retrieval_config["subsample_type"], retrieval_config["use_type"]))
+            if 'PolynomialInteractionGenerator' in inference_config_item:
+                pipeline.append(PolynomialInteractionGenerator(**inference_config_item['PolynomialInteractionGenerator']))
+
             pipeline.append(FilterValidFeatures())
-            pipeline.append(RebalanceFeatureDistribution(**inference_config_item['RebalanceFeatureDistribution']))
-            pipeline.append(CategoricalFeatureEncoder(**inference_config_item['CategoricalFeatureEncoder']))
-            shuffler = FeatureShuffler(**inference_config_item['FeatureShuffler'])
-            shuffler.shift = all_shifts[idx]
-            pipeline.append(shuffler)
+
+            if 'RebalanceFeatureDistribution' in inference_config_item:
+                pipeline.append(RebalanceFeatureDistribution(**inference_config_item['RebalanceFeatureDistribution']))
+            if 'CategoricalFeatureEncoder' in inference_config_item:
+                pipeline.append(CategoricalFeatureEncoder(**inference_config_item['CategoricalFeatureEncoder']))
+            if inference_config_item.get('FingerprintFeatureEncoder', False):
+                pipeline.append(FingerprintFeatureEncoder())
+            if 'FeatureShuffler' in inference_config_item:
+                shuffler = FeatureShuffler(**inference_config_item['FeatureShuffler'])
+                shuffler.offset = self.all_shifts[idx]
+                pipeline.append(shuffler)
+            
             if retrieval_config["use_retrieval"] and not retrieval_config["retrieval_before_preprocessing"]:
                 if retrieval_config["subsample_type"] == "sample":
                     assert retrieval_config[
@@ -136,11 +172,10 @@ class LimiXPredictor:
                     assert retrieval_config[
                         "calculate_feature_attention"], "Retrieval on sample level must calculate feature attention score before."
                 pipeline.append(
-                    InferenceAttentionMap(model_path, retrieval_config["calculate_feature_attention"],
+                    InferenceAttentionMap(self.model_path, retrieval_config["calculate_feature_attention"],
                                           retrieval_config["calculate_sample_attention"]))
                 pipeline.append(SubSampleData(retrieval_config["subsample_type"], retrieval_config["use_type"]))
             self.preprocess_pipelines.append(pipeline)
-
 
     def _check_n_features(self, X, reset):
         """Check whether the number of features matches the previous evaluation"""
@@ -230,7 +265,7 @@ class LimiXPredictor:
         return categorical_idx
         
     
-    def predict(self, x_train:np.ndarray, y_train:np.ndarray, x_test:np.ndarray) -> np.ndarray:
+    def predict(self, x_train:np.ndarray, y_train:np.ndarray, x_test:np.ndarray, task_type:Literal['Classification', 'Regression']='Classification') -> np.ndarray:
         """
         Perform inference using the LimiX model
         
@@ -239,9 +274,9 @@ class LimiXPredictor:
         y_train: Training data y
         x_test:  Testing data x
         """
-        if self.task_type == "Classification":
+        if task_type == "Classification":
             return self._predict_cls(x_train, y_train, x_test)
-        elif self.task_type == "Regression":
+        elif task_type == "Regression":
             return self._predict_reg(x_train, y_train, x_test)
         else:
             raise ValueError(f"Unsupported task type, supported tasks include classification and regression!")
@@ -249,8 +284,8 @@ class LimiXPredictor:
     def _predict_cls(self, x_train:np.ndarray, y_train:np.ndarray, x_test:np.ndarray) -> np.ndarray:
         np_rng = np.random.default_rng(self.seed)
         
-        x_train, y_train = self.validate_data(x_train, y_train, reset=True, validate_separately=False, accept_sparse=False, dtype=None, force_all_finite=False)
-        x_test = self.validate_data(x_test, reset=True, validate_separately=False, accept_sparse=False, dtype=None, force_all_finite=False)
+        x_train, y_train = self.validate_data(x_train, y_train, reset=True, validate_separately=False, accept_sparse=False, dtype=None, ensure_all_finite=False)
+        x_test = self.validate_data(x_test, reset=True, validate_separately=False, accept_sparse=False, dtype=None, ensure_all_finite=False)
         
         # "Concatenate x_train and x_test to ensure the preprocessing logic is completely consistent.
         x = np.concatenate([x_train, x_test], axis=0)
@@ -282,15 +317,7 @@ class LimiXPredictor:
             y_ = self.class_permutations[id_pipe][y.copy()]
             categorical_idx_ = categorical_idx.copy()
             for id_step, step in enumerate(pipe):
-                if isinstance(step, RebalanceFeatureDistribution):
-                    x_train_ = x_[:len(y_train)]
-                    x_test_ = x_[len(y_train):]
-                    if x_train_.shape[1] != x_test_.shape[1]:
-                        x_test_ = x_test_[:, :x_train_.shape[1]]
-                    x_train_, categorical_idx_ = step.fit_transform(x_train_, categorical_idx_, self.seeds[id_pipe*self.preprocess_num+id_step])
-                    x_test_, categorical_idx_ = step.transform(x_test_)
-                    x_ = np.concatenate([x_train_, x_test_], axis=0)
-                elif isinstance(step, InferenceAttentionMap):
+                if isinstance(step, InferenceAttentionMap):
                     feature_attention_score, sample_attention_score = step.inference(X_train=x_[:len(y_train)],
                                                                                      y_train=y_train,
                                                                                      X_test=x_[len(y_train):],
@@ -307,7 +334,7 @@ class LimiXPredictor:
                     else:
                         attention_score = step.transform(torch.from_numpy(x_[len(y_train):]).float())
                 else:
-                    x_, categorical_idx_ = step.fit_transform(x_, categorical_idx_, self.seeds[id_pipe*self.preprocess_num+id_step])
+                    x_, categorical_idx_ = step.fit_transform(x_, categorical_idx_, self.seeds[id_pipe*self.preprocess_num+id_step], y=y_)
                     # print(f"step {id_step} categorical_idx_ {categorical_idx_}")
             
             x_ = torch.from_numpy(x_[:, :]).float().to(self.device)
@@ -464,8 +491,8 @@ class LimiXPredictor:
     def _predict_reg(self, x_train:np.ndarray, y_train:np.ndarray, x_test:np.ndarray) -> np.ndarray:
         np_rng = np.random.default_rng(self.seed)
         
-        x_train, y_train = self.validate_data(x_train, y_train, reset=True, validate_separately=False, accept_sparse=False, dtype=None, force_all_finite=False)
-        x_test = self.validate_data(x_test, reset=True, validate_separately=False, accept_sparse=False, dtype=None, force_all_finite=False)
+        x_train, y_train = self.validate_data(x_train, y_train, reset=True, validate_separately=False, accept_sparse=False, dtype=None, ensure_all_finite=False)
+        x_test = self.validate_data(x_test, reset=True, validate_separately=False, accept_sparse=False, dtype=None, ensure_all_finite=False)
         
         # "Concatenate x_train and x_test to ensure the preprocessing logic is completely consistent.
         x = np.concatenate([x_train, x_test], axis=0)
@@ -483,15 +510,7 @@ class LimiXPredictor:
             y_ = y_train.copy()
             categorical_idx_ = categorical_idx.copy()
             for id_step, step in enumerate(pipe):
-                if isinstance(step, RebalanceFeatureDistribution):
-                    x_train_ = x_[:len(y_train)]
-                    x_test_ = x_[len(y_train):]
-                    if x_train_.shape[1] != x_test_.shape[1]:
-                        x_test_ = x_test_[:, :x_train_.shape[1]]
-                    x_train_, categorical_idx_ = step.fit_transform(x_train_, categorical_idx_, self.seeds[id_pipe*self.preprocess_num+id_step])
-                    x_test_, categorical_idx_ = step.transform(x_test_)
-                    x_ = np.concatenate([x_train_, x_test_], axis=0)
-                elif isinstance(step, InferenceAttentionMap):
+                if isinstance(step, InferenceAttentionMap):
 
                     feature_attention_score, sample_attention_score = step.inference(X_train=x_[:len(y_train)],
                                                                                      y_train=y_train,
@@ -509,7 +528,7 @@ class LimiXPredictor:
                     else:
                         attention_score = step.transform(torch.from_numpy(x_[len(y_train):]).float())
                 else:
-                    x_, categorical_idx_ = step.fit_transform(x_, categorical_idx_, self.seeds[id_pipe*self.preprocess_num+id_step])
+                    x_, categorical_idx_ = step.fit_transform(x_, categorical_idx_, self.seeds[id_pipe*self.preprocess_num+id_step], y=y_)
             
             x_ = torch.from_numpy(x_[:, :]).float().to(self.device)
             y_ = torch.from_numpy(y_).float().to(self.device)

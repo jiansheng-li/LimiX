@@ -106,4 +106,6 @@ dependencies:
       - tzdata==2025.2
       - urllib3==2.5.0
       - xgboost==3.0.4
+      - kditransform==1.1.0
+      - hyperopt==0.2.7
 prefix: /root/miniconda3/envs/LimiX
