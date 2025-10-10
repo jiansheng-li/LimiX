@@ -362,6 +362,15 @@ class EmbYEncoderStep(nn.Module):
         y_test = torch.zeros_like(y[:, eval_pos:], dtype=torch.int)
         y_train_emb = self.y_embedding(y_train).to(torch.float16)
         y_test_emb = self.y_mask(y_test).to(torch.float16)
+
+        nonzero_indices = torch.nonzero(y_train, as_tuple=False)
+        nonzero_values = y_train[nonzero_indices[:, 0], nonzero_indices[:, 1]] if y_train.dim() == 2 else y_train[
+            nonzero_indices.flatten()]
+
+
+        y_train_emb_=self.y_embedding(nonzero_values).to(torch.float16)
+
+
         y_emb = torch.cat([y_train_emb, y_test_emb], dim=1)
         
         input[self.out_key] = y_emb
@@ -393,7 +402,8 @@ class MulticlassTargetEncoder(nn.Module):
         x_ = x.clone()
         for b in range(x.shape[0]):
             x_[b, :, :] = (x[b, :, :].unsqueeze(-1) > unique_xs[b]).sum(dim=-1)
-   
+
+
         input[self.out_key] = x_
         return input
 

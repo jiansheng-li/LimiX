@@ -1,4 +1,5 @@
 import numpy as np
+from torch.cuda import OutOfMemoryError
 from torch.utils.data import DataLoader, Dataset
 import torch
 import warnings
@@ -719,11 +720,18 @@ class SubSampleData():
         if self.subsample_type == "sample":
             if self.use_type == "mixed":
                 y_feature_attention_score = feature_attention_score[:, -1, :].squeeze().permute(1, 0).unsqueeze(
-                    2).repeat(1, 1,
-                              sample_attention_score.shape[2])  # shape [features,test_sample_lens,train_sample_lens]
+                    -1) # shape [features,test_sample_lens,1] broadcast to [features,test_sample_lens,train_sample_lens]
+                #TODO jianshengli may cause OOM
+                try:
+                    self.attention_score = torch.mean(sample_attention_score.to("cuda") * y_feature_attention_score.to("cuda"),
+                                                      dim=0).cpu()  # shape [test_sample_lens,train_sample_lens]
+                except OutOfMemoryError as e:
+                    print("calculate attention score OOM, use cpu")
+                    self.attention_score = torch.mean(
+                        sample_attention_score.cpu() * y_feature_attention_score.cpu(),
+                        dim=0)
+                del sample_attention_score,y_feature_attention_score
 
-                self.attention_score = torch.mean(sample_attention_score * y_feature_attention_score,
-                                                  dim=0)  # shape [test_sample_lens,train_sample_lens]
             else:
                 self.attention_score = sample_attention_score[-1, :, :]
             self.X_train = x
@@ -731,7 +739,7 @@ class SubSampleData():
         else:
             y_feature_attention_score = torch.mean(feature_attention_score[:, -1, :].squeeze(),dim=0)  # shape [test_sample_lens,features]
             if subsample_idx is None:
-                self.subsample_idx = np.argsort(y_feature_attention_score)[-min(self.subsample_num, x.shape[0]):]
+                self.subsample_idx = torch.argsort(y_feature_attention_score)[-min(self.subsample_num, x.shape[0]):]
             else:
                 self.subsample_idx = subsample_idx
             self.X_train = x

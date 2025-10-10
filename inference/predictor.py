@@ -21,9 +21,13 @@ import pandas as pd
 import einops
 import json
 import os
-
+from tqdm import tqdm
+from utils.retrieval_utils import find_top_K_indice, find_top_K_class, RelabelRetrievalY
 
 NA_PLACEHOLDER = "__MISSING__"
+
+
+
 
 class LimiXPredictor:
     """"LimiX model inferencer, supporting tasks such as classification, regression, and missing value prediction."""
@@ -38,7 +42,8 @@ class LimiXPredictor:
                  mask_prediction:bool=False,
                  categorical_features_indices:List[int]|None=None,
                  inference_with_DDP: bool = False,
-                 seed:int=0):
+                 multiclass_mode: bool = False,
+                 seed: int = 0):
         """
         init LimiXPredictor
         
@@ -64,6 +69,7 @@ class LimiXPredictor:
         self.model_path = model_path
         self.device = device
         self.mix_precision = mix_precision
+        self.multiclass_mode = multiclass_mode
         self.categorical_features_indices = categorical_features_indices
         self.seed = seed
         self.inference_config = inference_config
@@ -122,7 +128,8 @@ class LimiXPredictor:
                 if len(inference_config_item['RebalanceFeatureDistribution']['worker_tags']) > 0:
                     for i, v in enumerate(inference_config_item['RebalanceFeatureDistribution']['worker_tags']):
                         if v == 'power':
-                            print("WARNING: Missing value imputation does not currently support the preprocessing method of power! Using the default worker_tags method")
+                            print(
+                                "WARNING: Missing value imputation does not currently support the preprocessing method of power! Using the default worker_tags method")
                             inference_config_item['RebalanceFeatureDistribution']['worker_tags'].pop(i)
                             inference_config_item['RebalanceFeatureDistribution']['worker_tags'].append(None)
                 inference_config_item['RebalanceFeatureDistribution']['discrete_flag'] = True
@@ -188,7 +195,7 @@ class LimiXPredictor:
                     f"X has {n_features} features, "
                     f"but this estimator is expecting {self.n_features_in_} features."
                 )
-    
+
     def validate_data(self, x=None, y=None, reset=True, validate_separately=False, **check_params):
         """
         {'accept_sparse': False, 'dtype': None, 'ensure_all_finite': 'allow-nan'}
@@ -206,12 +213,12 @@ class LimiXPredictor:
             return x
 
         return None
-    
-    def convert_x_dtypes(self, x:np.ndarray, dtypes:Literal["float32", "float64"] = "float64"):
+
+    def convert_x_dtypes(self, x: np.ndarray, dtypes: Literal["float32", "float64"] = "float64"):
         NUMERIC_DTYPE_KINDS = "?bBiufm"
         OBJECT_DTYPE_KINDS = "OV"
         STRING_DTYPE_KINDS = "SaU"
-        
+
         if x.dtype.kind in NUMERIC_DTYPE_KINDS:
             x = pd.DataFrame(x, copy=False, dtype=dtypes)
         elif x.dtype.kind in OBJECT_DTYPE_KINDS:
@@ -224,23 +231,24 @@ class LimiXPredictor:
         if len(integer_columns) > 0:
             x[integer_columns] = x[integer_columns].astype(dtypes)
         return x
-    
-    def convert_category2num(self, x, dtype:np.floating=np.float64, placeholder: str = NA_PLACEHOLDER,):
+
+    def convert_category2num(self, x, dtype: np.floating = np.float64, placeholder: str = NA_PLACEHOLDER, ):
         ordinal_encoder = OrdinalEncoder(categories="auto",
-                                        dtype=dtype,
-                                        handle_unknown="use_encoded_value",
-                                        unknown_value=-1,
-                                        encoded_missing_value=np.nan)
-        col_encoder = ColumnTransformer(transformers=[("encoder", ordinal_encoder, make_column_selector(dtype_include=["category", "string"]))],
-                                        remainder=FunctionTransformer(),
-                                        sparse_threshold=0.0,
-                                        verbose_feature_names_out=False,
-                                    )
-        
+                                         dtype=dtype,
+                                         handle_unknown="use_encoded_value",
+                                         unknown_value=-1,
+                                         encoded_missing_value=np.nan)
+        col_encoder = ColumnTransformer(
+            transformers=[("encoder", ordinal_encoder, make_column_selector(dtype_include=["category", "string"]))],
+            remainder=FunctionTransformer(),
+            sparse_threshold=0.0,
+            verbose_feature_names_out=False,
+            )
+
         string_cols = x.select_dtypes(include=["string", "object"]).columns
         if len(string_cols) > 0:
             x[string_cols] = x[string_cols].fillna(placeholder)
-        
+
         X_encoded = col_encoder.fit_transform(x)
 
         string_cols_ix = [x.columns.get_loc(col) for col in string_cols]
@@ -254,8 +262,7 @@ class LimiXPredictor:
 
         return X_encoded
 
-    
-    def get_categorical_features_indices(self, x:np.ndarray):
+    def get_categorical_features_indices(self, x: np.ndarray):
         if x.shape[0] < self.min_seq_len_for_category_infer:
             return []
         categorical_idx = []
@@ -280,8 +287,8 @@ class LimiXPredictor:
             return self._predict_reg(x_train, y_train, x_test)
         else:
             raise ValueError(f"Unsupported task type, supported tasks include classification and regression!")
-        
-    def _predict_cls(self, x_train:np.ndarray, y_train:np.ndarray, x_test:np.ndarray) -> np.ndarray:
+
+    def _predict_cls(self, x_train: np.ndarray, y_train: np.ndarray, x_test: np.ndarray) -> np.ndarray:
         np_rng = np.random.default_rng(self.seed)
         
         x_train, y_train = self.validate_data(x_train, y_train, reset=True, validate_separately=False, accept_sparse=False, dtype=None, ensure_all_finite=False)
@@ -289,23 +296,23 @@ class LimiXPredictor:
         
         # "Concatenate x_train and x_test to ensure the preprocessing logic is completely consistent.
         x = np.concatenate([x_train, x_test], axis=0)
-        
+
         # Encode y_train
         self.label_encoder = LabelEncoder()
         y = self.label_encoder.fit_transform(y_train)
         self.classes = self.label_encoder.classes_
         self.n_classes = len(self.classes)
-        
+
         # shuffle y
         noise = np_rng.random((self.n_estimators * self.class_shuffle_factor, self.n_classes))
         shufflings = np.argsort(noise, axis=1)
         uniqs = np.unique(shufflings, axis=0)
         balance_count = self.n_estimators // len(uniqs)
         self.class_permutations = list(chain.from_iterable(repeat(elem, balance_count) for elem in uniqs))
-        cout = self.n_estimators%len(uniqs)
-        if self.n_estimators%len(uniqs) > 0:
+        cout = self.n_estimators % len(uniqs)
+        if self.n_estimators % len(uniqs) > 0:
             self.class_permutations += [uniqs[i] for i in np_rng.choice(len(uniqs), size=cout)]
-        
+
         # Preprocess x
         x = self.convert_x_dtypes(x)
         x = self.convert_category2num(x)
@@ -322,12 +329,12 @@ class LimiXPredictor:
                                                                                      y_train=y_train,
                                                                                      X_test=x_[len(y_train):],
                                                                                      task_type="cls")
-                   
+
                 elif isinstance(step, SubSampleData):
                     step.fit(torch.from_numpy(x_[:len(y_train)]), torch.from_numpy(y_train),
                              feature_attention_score=feature_attention_score,
                              sample_attention_score=sample_attention_score,
-                             subsample_ratio=self.inference_config[id_pipe]["retrieval_config"]["subsample_ratio"])
+                             subsample_ratio=self.inference_config[id_pipe]["retrieval_config"]["sub_feature_ratio"])
                     if self.inference_config[id_pipe]["retrieval_config"]["subsample_type"] == "feature":
                         x_ = step.transform(torch.from_numpy(x_[len(y_train):]).float())
                         categorical_idx_ = self.get_categorical_features_indices(x_)
@@ -336,24 +343,72 @@ class LimiXPredictor:
                 else:
                     x_, categorical_idx_ = step.fit_transform(x_, categorical_idx_, self.seeds[id_pipe*self.preprocess_num+id_step], y=y_)
                     # print(f"step {id_step} categorical_idx_ {categorical_idx_}")
-            
+
             x_ = torch.from_numpy(x_[:, :]).float().to(self.device)
             y_ = torch.from_numpy(y_).float().to(self.device)
             torch.manual_seed(self.seed)
             torch.cuda.manual_seed_all(self.seed)
-            if self.inference_config[id_pipe]["retrieval_config"]["use_retrieval"] and \
+            if self.multiclass_mode:
+                threshold = self.inference_config[id_pipe]["retrieval_config"]["threshold"]
+                retrieval_len = self.inference_config[id_pipe]["retrieval_config"]["retrieval_len"]
+                top_k_indices = find_top_K_indice(attention_score.cpu(), threshold=threshold, mixed_method="max",
+                                                  retrieval_len=retrieval_len)
+                trainX_ = [x_[:len(y_)][indice] for index, indice in enumerate(top_k_indices)]
+                testX=x_[len(y_):]
+                y_train_ = [y_[indice] for index, indice in enumerate(top_k_indices)]
+                all_indice = [find_top_K_class(y_, num_class=10) for y_ in y_train_]
+                trainX_ = [trainX_[index][indice] for index, indice in enumerate(all_indice)]
+                y_train_ = [y_train_[index][indice].unsqueeze(0) for index, indice in enumerate(all_indice)]
+                output_list = []
+                self.model.to("cuda")
+                for idx in tqdm(range(testX.shape[0])):
+                    x_ = trainX_[idx]
+                    y_ = y_train_[idx]
+                    x_ = torch.cat([x_, testX[idx].unsqueeze(0)], dim=0).to(self.model.device).unsqueeze(0)
+                    relabel = RelabelRetrievalY(y_.unsqueeze(-1))
+                    y_ = relabel.transform_y().squeeze(-1)
+                    with (
+                        torch.autocast(torch.device("cuda").type, enabled=True),
+                        torch.inference_mode(),
+                    ):
+                        output = self.model(x=x_, y=y_, eval_pos=y_.shape[1],
+                                       task_type="cls")
+                        if len(output.shape) == 3:
+                            output = output.view(-1, output.shape[-1])
+
+                        output = output.cpu().numpy()
+                        output = relabel.inverse_transform_y(output, num_classes=max(10, np.unique(y_train).shape[0]))
+                        output = torch.tensor(output, dtype=torch.float32, device=self.model.device)
+                        output_list.append(output.cpu())
+                    output=torch.cat(output_list, dim=0)
+                    output = output[..., self.class_permutations[id_pipe]]
+                outputs.append(output)
+            elif self.inference_config[id_pipe]["retrieval_config"]["use_retrieval"] and \
                     self.inference_config[id_pipe]["retrieval_config"]["subsample_type"] == "sample":
+                if "cluster_num" in self.inference_config[id_pipe]["retrieval_config"]:
+                    cluster_num = self.inference_config[id_pipe]["retrieval_config"]["cluster_num"]
+                    use_cluster = self.inference_config[id_pipe]["retrieval_config"]["use_cluster"]
+                else:
+                    cluster_num = None
+                    use_cluster = False
                 inference = InferenceResultWithRetrieval(model=self.model,
                                                          sample_selection_type="AM")
-                output = inference.inference(x_[:len(y_train)].squeeze(), y_.squeeze(),
-                                             x_[len(y_train):].squeeze(),
+                output = inference.inference(x_[:len(y_train)], y_,
+                                             x_[len(y_train):],
                                              attention_score=attention_score,
                                              retrieval_len=self.inference_config[id_pipe]["retrieval_config"][
-                                                 "subsample_ratio"],
-                                             dynamic_ratio=self.inference_config[id_pipe]["retrieval_config"][
-                                                 "dynamic_ratio"] if "dynamic_ratio" in self.inference_config[id_pipe][
-                                                 "retrieval_config"] else None,
-                                             task_type="cls")
+                                                 "retrieval_len"],
+                                             dynamic_ratio=self.inference_config[id_pipe]["retrieval_config"].get(
+                                                 "dynamic_ratio", None),
+                                             use_cluster=use_cluster,
+                                             cluster_num=cluster_num,
+                                             task_type="cls",
+                                             use_threshold=self.inference_config[id_pipe]["retrieval_config"].get(
+                                                 "use_threshold", False),
+                                             threshold=self.inference_config[id_pipe]["retrieval_config"].get(
+                                                 "threshold", 0),
+                                             mixed_method=self.inference_config[id_pipe]["retrieval_config"].get(
+                                                 "mixed_method", "max"))
                 if self.softmax_temperature != 1:
                     output = (output[:, :self.n_classes].float() / self.softmax_temperature)
 
@@ -362,7 +417,7 @@ class LimiXPredictor:
             elif self.inference_with_DDP:
                 inference = InferenceResultWithRetrieval(model=self.model,
                                                          sample_selection_type="DDP")
-                output = inference.inference(x_[:len(y_train)].squeeze(1), y_, x_[len(y_train):].squeeze(1),
+                output = inference.inference(x_[:len(y_train)], y_, x_[len(y_train):],
                                              task_type="cls")
                 if self.softmax_temperature != 1:
                     output = (output[:, :self.n_classes].float() / self.softmax_temperature)
@@ -371,10 +426,10 @@ class LimiXPredictor:
                 outputs.append(output)
             else:
                 self.model.to(self.device)
-                with(torch.autocast(device_type='cuda', enabled=self.mix_precision), torch.inference_mode()):
-                    x_=x_.unsqueeze(0)
+                with(torch.autocast('cuda', enabled=self.mix_precision), torch.inference_mode()):
+                    x_ = x_.unsqueeze(0)
                     y_ = y_.unsqueeze(0)
-                    output=self.model(x=x_, y=y_, eval_pos=y_.shape[1], task_type='cls')
+                    output = self.model(x=x_, y=y_, eval_pos=y_.shape[1], task_type='cls')
 
                     if self.mask_prediction:
                         process_config = output['process_config']
@@ -390,27 +445,29 @@ class LimiXPredictor:
 
                     output = output[..., self.class_permutations[id_pipe]]
                 outputs.append(output)
-            
+
         outputs = [torch.nn.functional.softmax(o, dim=1) for o in outputs]
         output = torch.stack(outputs).mean(dim=0)
-        mask_prediction = np.stack(mask_predictions).mean(axis=0) if mask_predictions != [] and self.mask_prediction else None
+        mask_prediction = np.stack(mask_predictions).mean(
+            axis=0) if mask_predictions != [] and self.mask_prediction else None
         output = output.float().cpu().numpy()
 
         if self.mask_prediction:
             return output / output.sum(axis=1, keepdims=True), mask_prediction
         else:
             return output / output.sum(axis=1, keepdims=True)
-    
-    def PostProcessInModel(self, feature_pred:torch.tensor, config: dict) -> torch.tensor:
+
+    def PostProcessInModel(self, feature_pred: torch.tensor, config: dict) -> torch.tensor:
         # Revert preprocess in model forward
-        feature_pred = feature_pred / torch.sqrt(config['features_per_group'] / config['num_used_features'].to(self.device))
-        feature_pred = feature_pred*config['std_for_normalization'] + config['mean_for_normalization']
+        feature_pred = feature_pred / torch.sqrt(
+            config['features_per_group'] / config['num_used_features'].to(self.device))
+        feature_pred = feature_pred * config['std_for_normalization'] + config['mean_for_normalization']
         feature_pred = einops.rearrange(feature_pred, "b s f n -> s b (f n)").squeeze(1).float().cpu().numpy()
         if config['n_x_padding'] > 0:
-            feature_pred = feature_pred[:,:-config['n_x_padding']]
+            feature_pred = feature_pred[:, :-config['n_x_padding']]
         return feature_pred
-    
-    def PostProcess(self, feature_pred:np.ndarray, pipeline:List, config: dict, gt=False) -> np.ndarray:        
+
+    def PostProcess(self, feature_pred: np.ndarray, pipeline: List, config: dict, gt=False) -> np.ndarray:
         # Revert preprocess in the Classifier
         for id_step, step in enumerate(reversed(pipeline)):
             if isinstance(step, FeatureShuffler):
@@ -434,61 +491,71 @@ class LimiXPredictor:
                 else:
                     if len(step.categorical_features) == 0 or step.transformer is None:
                         continue
-                    cont_features_indices = [idx for idx in range(feature_pred.shape[1]) if idx not in step.categorical_features]
-                    
+                    cont_features_indices = [idx for idx in range(feature_pred.shape[1]) if
+                                             idx not in step.categorical_features]
+
                     assert np.array_equal(step.categorical_features, np.arange(len(step.categorical_features)))
                     start_idx = 0
-                    for idx, out_category in enumerate(step.transformer.named_transformers_['one_hot_encoder'].categories_):
+                    for idx, out_category in enumerate(
+                            step.transformer.named_transformers_['one_hot_encoder'].categories_):
                         assert len(out_category) >= 2
                         if not np.any(np.isnan(out_category)):
-                            if len(out_category) == 2: # e.g. [3, 5.5]
-                                feature_pred[:,start_idx] = np.round(np.clip(feature_pred[:,start_idx], a_min=0, a_max=1))
+                            if len(out_category) == 2:  # e.g. [3, 5.5]
+                                feature_pred[:, start_idx] = np.round(
+                                    np.clip(feature_pred[:, start_idx], a_min=0, a_max=1))
                                 start_idx += 1
                             else:
-                                arr = feature_pred[:, start_idx:start_idx+len(out_category)]
-                                feature_pred[:, start_idx:start_idx+len(out_category)] = (arr == arr.max(axis=1, keepdims=True)).astype(float)
+                                arr = feature_pred[:, start_idx:start_idx + len(out_category)]
+                                feature_pred[:, start_idx:start_idx + len(out_category)] = (
+                                            arr == arr.max(axis=1, keepdims=True)).astype(float)
                                 start_idx += len(out_category)
                         else:
-                            if len(out_category) == 2: # e.g. [0, nan]
-                                feature_pred[:,start_idx] = 0
+                            if len(out_category) == 2:  # e.g. [0, nan]
+                                feature_pred[:, start_idx] = 0
                                 start_idx += 1
                             else:
-                                arr = feature_pred[:, start_idx:start_idx+len(out_category)-1]
-                                feature_pred[:, start_idx:start_idx+len(out_category)-1] = (arr == arr.max(axis=1, keepdims=True)).astype(float)
-                                feature_pred[:, start_idx+len(out_category)-1] = 0
+                                arr = feature_pred[:, start_idx:start_idx + len(out_category) - 1]
+                                feature_pred[:, start_idx:start_idx + len(out_category) - 1] = (
+                                            arr == arr.max(axis=1, keepdims=True)).astype(float)
+                                feature_pred[:, start_idx + len(out_category) - 1] = 0
                                 start_idx += len(out_category)
-                    feature_pred = np.column_stack([step.transformer.named_transformers_['one_hot_encoder'].inverse_transform(feature_pred[:, step.categorical_features]), feature_pred[:, cont_features_indices]])
-                    
+                    feature_pred = np.column_stack([step.transformer.named_transformers_[
+                                                        'one_hot_encoder'].inverse_transform(
+                        feature_pred[:, step.categorical_features]), feature_pred[:, cont_features_indices]])
+
             elif isinstance(step, RebalanceFeatureDistribution):
                 if step.svd_tag == 'svd' and step.svd_n_comp > 0:
                     feature_pred = feature_pred[:, :-step.svd_n_comp]
-                if step.worker_tags[0] in ["quantile_uniform_10", "quantile_uniform_5", "quantile_uniform_all_data"] and step.n_quantile_features > 0:
+                if step.worker_tags[0] in ["quantile_uniform_10", "quantile_uniform_5",
+                                           "quantile_uniform_all_data"] and step.n_quantile_features > 0:
                     feature_pred = feature_pred[:, :-step.n_quantile_features]
                 elif step.worker_tags[0] == "power":
-                    raise ValueError(f"Missing value imputation does not currently support the preprocessing method of power!")
+                    raise ValueError(
+                        f"Missing value imputation does not currently support the preprocessing method of power!")
                     cont_features_indices = [idx for idx in range(feature_pred.shape[1]) if idx not in step.dis_ix]
-                    feature_pred[:, cont_features_indices] = step.worker.named_transformers_['feat_transform'].inverse_transform(feature_pred[:, cont_features_indices])
+                    feature_pred[:, cont_features_indices] = step.worker.named_transformers_[
+                        'feat_transform'].inverse_transform(feature_pred[:, cont_features_indices])
                     # reverse feature order
                 if step.feature_indices is not None:
                     inv_p = np.argsort(step.feature_indices)
                     feature_pred = feature_pred[:, inv_p]
 
-                    
+
             elif isinstance(step, FilterValidFeatures):
                 deleted_indices = np.where(step.invalid_indices)[0]
                 if len(deleted_indices) > 0:
                     original_cols = len(deleted_indices) + feature_pred.shape[1]
-                    restored = np.zeros((feature_pred.shape[0], original_cols))                
+                    restored = np.zeros((feature_pred.shape[0], original_cols))
                     all_indices = set(range(original_cols))
-                    kept_indices = list(all_indices - set(deleted_indices)) 
+                    kept_indices = list(all_indices - set(deleted_indices))
                     for i, idx in enumerate(kept_indices):
-                        restored[:, idx] = feature_pred[:, i]                
+                        restored[:, idx] = feature_pred[:, i]
                     for i, idx in enumerate(deleted_indices):
                         restored[:, idx] = step.invalid_features[:, i]
                     feature_pred = restored.copy()
         return feature_pred
-        
-    def _predict_reg(self, x_train:np.ndarray, y_train:np.ndarray, x_test:np.ndarray) -> np.ndarray:
+
+    def _predict_reg(self, x_train: np.ndarray, y_train: np.ndarray, x_test: np.ndarray) -> np.ndarray:
         np_rng = np.random.default_rng(self.seed)
         
         x_train, y_train = self.validate_data(x_train, y_train, reset=True, validate_separately=False, accept_sparse=False, dtype=None, ensure_all_finite=False)
@@ -496,13 +563,13 @@ class LimiXPredictor:
         
         # "Concatenate x_train and x_test to ensure the preprocessing logic is completely consistent.
         x = np.concatenate([x_train, x_test], axis=0)
-    
+
         # preprocess x
         x = self.convert_x_dtypes(x)
         x = self.convert_category2num(x)
         x = x.astype(float)
         categorical_idx = self.get_categorical_features_indices(x)
-    
+
         outputs = []
         mask_predictions = []
         for id_pipe, pipe in enumerate(self.preprocess_pipelines):
@@ -512,16 +579,16 @@ class LimiXPredictor:
             for id_step, step in enumerate(pipe):
                 if isinstance(step, InferenceAttentionMap):
 
-                    feature_attention_score, sample_attention_score = step.inference(X_train=x_[:len(y_train)],
+                    feature_attention_score, sample_attention_score = step.inference_on_single_gpu(X_train=x_[:len(y_train)],
                                                                                      y_train=y_train,
                                                                                      X_test=x_[len(y_train):],
                                                                                      task_type="reg")
-                    
+
                 elif isinstance(step, SubSampleData):
                     step.fit(torch.from_numpy(x_[:len(y_train)]), torch.from_numpy(y_train),
                              feature_attention_score=feature_attention_score,
                              sample_attention_score=sample_attention_score,
-                             subsample_ratio=self.inference_config[id_pipe]["retrieval_config"]["subsample_ratio"])
+                             subsample_ratio=self.inference_config[id_pipe]["retrieval_config"]["sub_feature_ratio"])
                     if self.inference_config[id_pipe]["retrieval_config"]["subsample_type"] == "feature":
                         x_ = step.transform(torch.from_numpy(x_[len(y_train):]).float())
                         categorical_idx_ = self.get_categorical_features_indices(x_)
@@ -536,13 +603,26 @@ class LimiXPredictor:
             torch.cuda.manual_seed_all(self.seed)
             if self.inference_config[id_pipe]["retrieval_config"]["use_retrieval"] and \
                     self.inference_config[id_pipe]["retrieval_config"]["subsample_type"] == "sample":
+                if "cluster_num" in self.inference_config[id_pipe]["retrieval_config"]:
+                    cluster_num = self.inference_config[id_pipe]["retrieval_config"]["cluster_num"]
+                    use_cluster = self.inference_config[id_pipe]["retrieval_config"]["use_cluster"]
+                else:
+                    cluster_num = None
+                    use_cluster = False
                 inference = InferenceResultWithRetrieval(model=self.model,
                                                          sample_selection_type="AM")
-                output = inference.inference(x_[:len(y_train)].squeeze(), y_.squeeze(),
-                                             x_[len(y_train):].squeeze(),
+                output = inference.inference(x_[:len(y_train)], y_,
+                                             x_[len(y_train):],
                                              attention_score=attention_score,
                                              retrieval_len=self.inference_config[id_pipe]["retrieval_config"][
-                                                 "subsample_ratio"], task_type="reg")
+                                                 "retrieval_len"],
+                                             dynamic_ratio=self.inference_config[id_pipe]["retrieval_config"].get("dynamic_ratio", None),
+                                             use_cluster=use_cluster,
+                                             cluster_num=cluster_num,
+                                             task_type="reg",
+                                             use_threshold=self.inference_config[id_pipe]["retrieval_config"].get("use_threshold", False),
+                                             threshold=self.inference_config[id_pipe]["retrieval_config"].get("threshold", 0),
+                                            mixed_method=self.inference_config[id_pipe]["retrieval_config"].get("mixed_method", "max"))
                 outputs.append(output)
             elif self.inference_with_DDP:
                 inference = InferenceResultWithRetrieval(model=self.model,
@@ -552,11 +632,11 @@ class LimiXPredictor:
                 outputs.append(output)
             else:
                 self.model.to(self.device)
-                with(torch.autocast(device_type='cuda', enabled=self.mix_precision), torch.inference_mode()):
-                    x_=x_.unsqueeze(0)
+                with(torch.autocast('cuda', enabled=self.mix_precision), torch.inference_mode()):
+                    x_ = x_.unsqueeze(0)
                     y_ = y_.unsqueeze(0)
 
-                    output=self.model(x=x_, y=y_, eval_pos=y_.shape[1], task_type='reg')
+                    output = self.model(x=x_, y=y_, eval_pos=y_.shape[1], task_type='reg')
 
                 if self.mask_prediction:
                     process_config = output['process_config']
@@ -567,10 +647,10 @@ class LimiXPredictor:
 
                 output = output if isinstance(output, dict) else output.squeeze(0)
             outputs.append(output)
-            
+
         output = torch.stack(outputs).squeeze(2).mean(dim=0)
         mask_prediction = np.stack(mask_predictions).mean(axis=0) if mask_predictions != [] else None
-        
+
         if self.mask_prediction:
             return output, mask_prediction
         else:

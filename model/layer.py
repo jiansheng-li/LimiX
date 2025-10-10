@@ -1,13 +1,14 @@
+from time import sleep
 from typing import Callable, Literal, Optional
 import functools
-
 import torch
 import torch.nn as nn
+from torch.cuda import OutOfMemoryError
 from torch.utils.checkpoint import checkpoint
 
 try:
     from flash_attn.flash_attn_interface import flash_attn_varlen_kvpacked_func, flash_attn_varlen_qkvpacked_func
-
+    from flash_attn import flash_attn_func
     HAVE_FLASH_ATTN = True
 except (ModuleNotFoundError, ImportError):
     HAVE_FLASH_ATTN = False
@@ -164,7 +165,123 @@ class MultiheadAttention(torch.nn.Module):
                     deterministic=False,
                 )
         return atten_out # type: ignore
-    
+    def chunked_flash_attention(
+            self,
+            qkv: torch.Tensor | None,
+            q: torch.Tensor | None,
+            kv: torch.Tensor | None
+    ) -> torch.Tensor:
+        assert HAVE_FLASH_ATTN, "Flash attention is not supported. Please install/reinstall flash attention."
+
+
+        chunk_size = 50000000 //2//192//qkv.shape[1]//qkv.shape[1]
+
+        if self.qkv_combined and qkv is not None:
+            B, S = qkv.shape[:2]
+            # Split into chunks along sequence dimension
+            atten_out = torch.empty(B, S, self.num_heads * self.head_dim, device=qkv.device, dtype=qkv.dtype)
+
+            for i in range(0, B, chunk_size):
+                chunk_end = min(i + chunk_size, B)
+                # qkv_chunk = qkv[:, i:chunk_end]
+                qkv_chunk = qkv[i:chunk_end]
+
+                chunk_B, chunk_S = qkv_chunk.shape[:2]
+                chunk_out = flash_attn_varlen_qkvpacked_func(
+                    qkv_chunk.reshape(chunk_B * chunk_S, 3, self.num_heads, self.head_dim),
+                    self.get_cu_seqlens(chunk_B, chunk_S, qkv.device),
+                    chunk_S,
+                    dropout_p=self.dropout,
+                    softmax_scale=None,
+                    causal=False,
+                    return_attn_probs=False,
+                    deterministic=False,
+                )
+                atten_out[i:chunk_end] = chunk_out.reshape(chunk_B, chunk_S, -1)
+
+        elif not self.qkv_combined and q is not None and kv is not None:
+            B, S = q.shape[:2]
+            kv_shape = kv.shape
+            # Split into chunks along sequence dimension for Q
+            atten_out = torch.empty(B, S, self.num_heads * self.head_dim, device=q.device, dtype=q.dtype)
+
+            for i in range(0, B, chunk_size):
+                chunk_end = min(i + chunk_size, B)
+                q_chunk = q[i:chunk_end]
+
+                chunk_B, chunk_S = q_chunk.shape[:2]
+                chunk_out = flash_attn_varlen_kvpacked_func(
+                    q_chunk.reshape(chunk_B * chunk_S, self.num_heads, self.head_dim),
+                    kv.reshape(B * kv_shape[1], 2, self.num_heads, self.head_dim),
+                    self.get_cu_seqlens(chunk_B, chunk_S, q.device),
+                    self.get_cu_seqlens(B, kv_shape[1], kv.device),
+                    chunk_S,
+                    kv_shape[1],
+                    dropout_p=self.dropout,
+                    causal=False,
+                    return_attn_probs=False,
+                    deterministic=False,
+                )
+                atten_out[i:chunk_end] = chunk_out.reshape(chunk_B, chunk_S, -1)
+
+            # Concatenate all query tiles
+        return atten_out.reshape(B*S, self.num_heads, self.head_dim)
+
+    def caculate_attention_score(self, q:torch.Tensor|None, k:torch.Tensor|None) -> torch.Tensor:
+        if len(q.shape)==3:
+            q=q.unsqueeze(0)
+            k=k.unsqueeze(0)
+        logits = torch.einsum("b q h d, b k h d -> b q k h", q, k)
+        logits *= torch.sqrt(torch.tensor(1.0 / q.shape[-1])).to(k.device)
+        ps = torch.softmax(logits.float(), dim=2).to(torch.float16).mean(dim=-1)
+        del logits
+        return ps
+
+    def chunked_caculate_attention_score(self, q:torch.Tensor|None, k:torch.Tensor|None) -> torch.Tensor:
+        if len(q.shape) == 4:
+            B, S, H, D = q.shape
+        else:
+            S, H, D = q.shape
+        try:
+            if len(q.shape)==3:
+                chunk_size = max(10000000 // 2 // 192 // q.shape[0], 1)
+                ps=torch.zeros(1, q.shape[0], k.shape[0], device=q.device, dtype=torch.float16)
+                for i in range(0, S, chunk_size):
+                    chunk_end = min(i + chunk_size, q.shape[0])
+                    q_chunk = q[i:chunk_end]
+                    k_chunk = k
+                    ps_chunk = self.caculate_attention_score(q_chunk.to(q.device), k_chunk.to(k.device))
+                    ps[:, i:chunk_end] = ps_chunk.to(q.device)
+            else:
+                chunk_size = max(2000000000 // 2 // 192 // q.shape[1] // k.shape[1], 1)
+                ps = torch.zeros(B, q.shape[1], k.shape[1], device=q.device, dtype=torch.float16)
+                for i in range(0, B, chunk_size):
+                    chunk_end = min(i + chunk_size, B)
+                    q_chunk = q[i:chunk_end]
+                    k_chunk = k[i:chunk_end]
+                    ps_chunk = self.caculate_attention_score(q_chunk.to(q.device), k_chunk.to(k.device))
+                    ps[i:chunk_end] = ps_chunk.to(q.device)
+        except OutOfMemoryError as e:
+            attention_device = torch.device("cpu")
+            if len(q.shape)==3:
+                chunk_size = max(10000000 // 2 // 192 // q.shape[0], 1)
+                ps=torch.zeros(1, q.shape[0], k.shape[0], device=q.device, dtype=torch.float16)
+                for i in range(0, S, chunk_size):
+                    chunk_end = min(i + chunk_size, q.shape[0])
+                    q_chunk = q[i:chunk_end]
+                    k_chunk = k
+                    ps_chunk = self.caculate_attention_score(q_chunk.to(q.device), k_chunk.to(k.device))
+                    ps[:, i:chunk_end] = ps_chunk.to(attention_device)
+            else:
+                chunk_size = max(2000000000 // 2 // 192 // q.shape[1] // k.shape[1], 1)
+                ps = torch.zeros(B, q.shape[1], k.shape[1], device=attention_device, dtype=torch.float16)
+                for i in range(0, B, chunk_size):
+                    chunk_end = min(i + chunk_size, B)
+                    q_chunk = q[i:chunk_end]
+                    k_chunk = k[i:chunk_end]
+                    ps_chunk = self.caculate_attention_score(q_chunk.to(q.device), k_chunk.to(k.device))
+                    ps[i:chunk_end] = ps_chunk.to(attention_device)
+        return ps.to(torch.float16)
     @override
     def forward(self, 
                 x: torch.Tensor, 
@@ -210,12 +327,14 @@ class MultiheadAttention(torch.nn.Module):
                 kv = kv.expand(*expand_shape)
             else:
                 kv = torch.einsum("... s, j h d s -> ... j h d", x_kv, self.kv_proj_weight)
-                
-        if attn_mask is None and HAVE_FLASH_ATTN and self.qkv_proj_weight.device == torch.device("cuda"):
-            atten_out = self.compute_attention_by_flashattn(qkv, q, kv)
-        else:
-            atten_out = self.compute_attention_by_torch(qkv, q, kv, attn_mask)
-                
+        try:
+            if attn_mask is None and HAVE_FLASH_ATTN:
+                atten_out = self.compute_attention_by_flashattn(qkv, q, kv)
+            else:
+                atten_out = self.compute_attention_by_torch(qkv, q, kv, attn_mask)
+        except (OutOfMemoryError,RuntimeError) as e:
+            #TODO jianshengli Clearify the dynamic chunked batch size. Now is 32.
+            atten_out = self.chunked_flash_attention(qkv, q, kv)
         atten_out = atten_out.reshape(BS, F, self.num_heads, self.head_dim)
 
         if qkv is not None:
@@ -223,23 +342,16 @@ class MultiheadAttention(torch.nn.Module):
         else:
             k,v=kv.unbind(dim=2)
         if calculate_feature_attention:
-            logits = torch.einsum("b q h d, b k h d -> b q k h", q, k)
-            logits *= (
-                torch.sqrt(torch.tensor(1.0 / (q.shape[-1]*q.shape[-2]))).to(k.device)
-            )
-            ps = torch.softmax(logits, dim=2).to(torch.float16)
-            del logits
-            feature_attention = torch.mean(ps, dim=-1)
-            del ps
+            try:
+                feature_attention = self.caculate_attention_score(q, k)
+            except (OutOfMemoryError,RuntimeError) as e:
+                feature_attention=self.chunked_caculate_attention_score(q, k)
+
         if calculate_sample_attention:
-            logits = torch.einsum("b q h d, b k h d -> b q k h", q, k)
-            logits *= (
-                torch.sqrt(torch.tensor(1.0 / (q.shape[-1] * q.shape[-2]))).to(k.device)
-            )
-            ps = torch.softmax(logits, dim=2).to(torch.float16)
-            del logits
-            sample_attention = torch.mean(ps, dim=-1)
-            del ps
+            try:
+                sample_attention = self.caculate_attention_score(q[-1], k[-1])
+            except (OutOfMemoryError,RuntimeError) as e:
+                sample_attention = self.chunked_caculate_attention_score(q[-1], k[-1])
         out = torch.einsum(
             "... h d, h d s -> ... s",
             atten_out,

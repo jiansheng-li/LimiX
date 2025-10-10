@@ -98,7 +98,7 @@ class FeaturesTransformer(nn.Module):
     def forward(self, x: torch.Tensor, 
                 y: torch.Tensor, 
                 eval_pos: int, 
-                task_type: Literal['reg', 'cls'] = 'cls') -> torch.Tensor | dict[str, torch.Tensor] | tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+                task_type: Literal['reg', 'cls',"emb"] = 'cls') -> torch.Tensor | dict[str, torch.Tensor] | tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         '''
             x: The input x, which includes both train x and test x, Shape: [batch, sequence, feature]
             y: The input y, which includes both train y and test y, Shape: [batch, label]
@@ -192,6 +192,7 @@ class FeaturesTransformer(nn.Module):
                 "cls_output": cls_output,
                 "reg_output": reg_output,
                 "feature_pred": feature_pred,
+                "embedding": encoder_out,
                 "process_config": {
                     "n_x_padding": feature_to_add,
                     "features_per_group": self.x_preprocess[3].num_features,
@@ -204,9 +205,10 @@ class FeaturesTransformer(nn.Module):
             cls_output, reg_output = self.y_decoder(test_encoder_out, test_y_type)
             if task_type=="cls":
                 output_decoded = cls_output
-            else:
+            elif task_type=="reg":
                 output_decoded = reg_output
-            
+            else:
+                output_decoded = encoder_out
         return output_decoded
 
     

@@ -125,7 +125,7 @@ def generate_infenerce_config(args):
         retrieval_before_preprocessing=False,
         calculate_feature_attention=False,
         calculate_sample_attention=False,
-        subsample_ratio=1,
+        retrieval_len=1,
         subsample_type=None,
         use_type=None,
     )
@@ -208,7 +208,7 @@ def sample_inferece_params(rng:np.random.Generator, sample_num:int=2, repeat_num
             "retrieval_before_preprocessing": False,
             "calculate_feature_attention": False,
             "calculate_sample_attention": False,
-            "subsample_ratio": 0.7,
+            "retrieval_len": 0.7,
             "subsample_type": "sample",
             "use_type": "mixed"
         }
