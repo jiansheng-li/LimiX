@@ -254,6 +254,7 @@ For the demo file, see [examples/demo_missing_value_imputation.py](examples/infe
 # ➤ Link
  - LimiX:Unleashing Structured-Data Modeling Capability for Generalist Intelligence: [LimiX:Unleashing Structured-Data Modeling Capability for Generalist Intelligence](https://arxiv.org/abs/2509.03505)
  - LimiX Technical Report: [LimiX_Technical_Report.pdf](https://github.com/limix-ldm/LimiX/blob/main/LimiX_Technical_Report.pdf)
+ - Detailed instructions for using Limix: [Visit the official Limix documentation](https://www.limix.ai/doc/)
  - Balance Comprehensive Challenging Omni-domain Classification Benchmark: [bcco_cls](https://huggingface.co/datasets/stableai-org/bcco_cls)
  - Balance Comprehensive Challenging Omni-domain Regression Benchmark: [bcco_reg](https://huggingface.co/datasets/stableai-org/bcco_reg)
 
