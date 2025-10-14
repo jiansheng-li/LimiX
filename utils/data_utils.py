@@ -6,7 +6,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler, LabelEncoder
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
-from typing import List
+from typing import List, Literal
 
 from utils.retrieval_utils import find_top_K_class
 
@@ -164,41 +164,6 @@ class TabularInferenceDataset(Dataset):
         else:
             self.X_test = X_test
 
-
-def load_data(data_root, folder):
-
-    le = LabelEncoder()
-    train_path = os.path.join(data_root, folder, folder + '_train.csv')
-    test_path = os.path.join(data_root, folder, folder + '_test.csv')
-    if os.path.exists(train_path):
-        train_df = pd.read_csv(train_path)
-        if os.path.exists(test_path):
-            test_df = pd.read_csv(test_path)
-        else:
-            train_df, test_df = train_test_split(train_df, test_size=0.5, random_state=42)
-    X_train = train_df.iloc[:, :-1]
-    y_train = train_df.iloc[:, -1]
-    X_test = test_df.iloc[:, :-1]
-    y_test = test_df.iloc[:, -1]
-    for col in X_train.columns:
-        if X_train[col].dtype == 'object':
-            try:
-                le = LabelEncoder()
-                X_train[col] = le.fit_transform(X_train[col])
-                X_test[col] = le.transform(X_test[col])
-            except Exception as e:
-                X_train = X_train.drop(columns=[col])
-                X_test = X_test.drop(columns=[col])
-    y_train = le.fit_transform(y_train)
-    y_test = le.transform(y_test)
-    trainX, trainy = X_train, y_train
-    trainX = np.asarray(trainX, dtype=np.float32)
-    trainy = np.asarray(trainy, dtype=np.int64)
-
-    testX, testy = X_test, y_test
-    testX = np.asarray(testX, dtype=np.float32)
-    testy = np.asarray(testy, dtype=np.int64)
-    return trainX, trainy, testX, testy
 
 
 def cluster_test_data(top_k_indices: torch.Tensor | List[torch.Tensor], k_groups, cluster_method="overlap"):
@@ -388,6 +353,28 @@ def gpu_kmeans(data, k, max_iters=100, tol=1e-4):
         centroids = new_centroids
 
     return labels
+
+def fix_data_shape(X:torch.Tensor,data_type:Literal["feature","label"]="feature",batch_size:int=1):
+    assert torch.is_tensor(X), f"X should be torch.Tensor, but got {X.type()}"
+    if batch_size != 1:
+        print(f"fix data with batch_size={batch_size}, please confirm the data shape is (batch_size, seq_len, feature_dim) (feature) or (batch_size, seq_len) (label)")
+        return X
+    # fix data shape to (batch_size, seq_len, feature_dim) or (batch_size, seq_len)
+
+    if data_type == "feature":
+        if X.dim() == 2:
+            return X.unsqueeze(0)
+        elif X.dim() == 3:
+            return X
+        else:
+            raise ValueError(f"feature should be 2D or 3D tensor with shape (batch_size, seq_len, feature_dim) or (seq_len, feature_dim), but got {X.dim()}D tensor")
+    elif data_type == "label":
+        X=X.squeeze()
+        if X.dim() == 1:
+            return X.unsqueeze(0)
+        else:
+            raise ValueError(f"label should be tensor with shape (batch_size, seq_len, ...) or (seq_len, ...), but got feature_dim>1")
+
 
 
 if __name__ == '__main__':

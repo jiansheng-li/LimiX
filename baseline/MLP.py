@@ -19,9 +19,9 @@ class TwoLayerMLP(nn.Module):
         return x
 
 
-def train_model(model, X_train, y_train, epochs=100, lr=0.001):
+def train_model(model, X_train, y_train, epochs=1000, lr=0.001):
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    optimizer = optim.AdamW(model.parameters(), lr=lr)
 
     for epoch in range(epochs):
         # 前向传播
@@ -32,7 +32,6 @@ def train_model(model, X_train, y_train, epochs=100, lr=0.001):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-
         if (epoch + 1) % 20 == 0:
             print(f'Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.4f}')
 
@@ -44,9 +43,39 @@ def test_model(model, X_test, y_test):
         outputs = model(X_test)
         _, predicted = torch.max(outputs.data, 1)
         accuracy = (predicted == y_test).sum().item() / len(y_test)
+        outputs=torch.softmax(outputs, dim=1)
         auc=auc_metric(y_test.cpu(), outputs.data.cpu())
         print(f'Test Accuracy: {accuracy:.4f}, AUC: {auc:.4f}')
-    return accuracy
+    return float(auc)
+
+def train_and_test_model(model, X_train, y_train, X_test, y_test, epochs=1000, lr=0.001):
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.AdamW(model.parameters(), lr=lr)
+    best_auc = 0.0
+    for epoch in range(epochs):
+        # 前向传播
+        outputs = model(X_train)
+        loss = criterion(outputs, y_train)
+
+        # 反向传播和优化
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        model.eval()  # 设置模型为评估模式
+        with torch.no_grad():
+            outputs = model(X_test)
+            _, predicted = torch.max(outputs.data, 1)
+            accuracy = (predicted == y_test).sum().item() / len(y_test)
+            outputs = torch.softmax(outputs, dim=1)
+            auc = float(auc_metric(y_test.cpu(), outputs.data.cpu()))
+            print(f'Test Accuracy: {accuracy:.4f}, AUC: {auc:.4f}')
+            if auc > best_auc:
+                best_auc = auc
+        if (epoch + 1) % 20 == 0:
+            print(f'Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.4f}, Test AUC: {best_auc:.4f}')
+        model.train()  # 设置模型为训练模式
+
+    return best_auc
 
 if __name__ == '__main__':
     pass

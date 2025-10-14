@@ -509,7 +509,7 @@ class EncoderBaseLayer(nn.Module):
                             )
 
     def call_sequence_attention(self, x: torch.Tensor, feature_atten_mask: torch.Tensor | None, eval_pos: int,
-                                index: int = 0,calculate_sample_attention:bool=False):
+                                index: int = 0,calculate_sample_attention:bool=False,copy_first_head_kv:bool=False):
         assert len(self.sequence_attentions) > index
         sample_attention=None
         if eval_pos < x.shape[1]:
@@ -525,7 +525,8 @@ class EncoderBaseLayer(nn.Module):
             print(f"Warning: eval_pos >= x.shape[1]!")
         x_train = self.sequence_attentions[index](
                         x = x[:, :eval_pos].transpose(1, 2),
-                        x_kv = x[:, :eval_pos].transpose(1, 2)
+                        x_kv = x[:, :eval_pos].transpose(1, 2),
+                        copy_first_head_kv=copy_first_head_kv,
                     )[0].transpose(1, 2)
         
         if x_test is not None:
@@ -539,10 +540,10 @@ class EncoderBaseLayer(nn.Module):
         for idx, (sublayer, layer_norm) in enumerate(zip(self.layer_steps, self.layer_norms)):
             residual = x
             x = layer_norm(x)
-            if idx == 2 and self.calculate_feature_attention and layer_idx == 11:
-                x, feature_attenion, _ = sublayer(x, feature_atten_mask, eval_pos,calculate_feature_attention=True)
-            elif idx == 4 and self.calculate_sample_attention and layer_idx == 11:
-                x, _, sample_attention = sublayer(x, feature_atten_mask, eval_pos,calculate_sample_attention=True)
+            if idx == 2 and layer_idx == 11:
+                x, feature_attenion, _ = sublayer(x, feature_atten_mask, eval_pos,calculate_feature_attention=self.calculate_feature_attention)
+            elif idx == 4 and layer_idx == 11:
+                x, _, sample_attention = sublayer(x, feature_atten_mask, eval_pos,calculate_sample_attention=self.calculate_sample_attention,copy_first_head_kv=True)
             else:
                 if isinstance(sublayer, functools.partial):
                     x = sublayer(x, feature_atten_mask, eval_pos)
@@ -552,7 +553,7 @@ class EncoderBaseLayer(nn.Module):
                     x = sublayer(x)
                     if isinstance(x, tuple):
                         x = x[0]
-                x = x + residual
+            x = x + residual
         return x,feature_attenion,sample_attention
                 
 class LayerStack(nn.Module):

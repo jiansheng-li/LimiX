@@ -3,11 +3,14 @@ import json
 import logging
 import os
 from datetime import datetime
+from typing import Literal
 
 import numpy as np
 import torch
 from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, log_loss
 from torch.utils.data import DistributedSampler
+
+from utils.data_utils import fix_data_shape
 
 
 def shuffle_data_along_dim(X: torch.Tensor | np.ndarray, dim: int = 0) -> torch.Tensor | np.ndarray:
@@ -116,9 +119,6 @@ def calculate_result(y_test_encoded, y_pred_proba):
     return acc, final_auc, f1, ce, ece
 
 
-
-
-
 def generate_infenerce_config(args):
     retrieval_config = dict(
         use_retrieval=False,
@@ -159,13 +159,13 @@ def generate_infenerce_config(args):
         json.dump(config_list, f)
 
 
-def sample_inferece_params(rng:np.random.Generator, sample_num:int=2, repeat_num:int=2):
+def sample_inferece_params(rng: np.random.Generator, sample_num: int = 2, repeat_num: int = 2):
     from hyperopt import hp
     from hyperopt.pyll import stochastic
 
     search_space = {
-        "RebalanceFeatureDistribution":{
-            "worker_tags": hp.choice("worker_tags", [["logNormal"], 
+        "RebalanceFeatureDistribution": {
+            "worker_tags": hp.choice("worker_tags", [["logNormal"],
                                                      ["quantile_uniform_10"],
                                                      ["quantile_uniform_5"],
                                                      ["quantile_uniform_all_data"],
@@ -188,19 +188,19 @@ def sample_inferece_params(rng:np.random.Generator, sample_num:int=2, repeat_num
         },
 
         "CategoricalFeatureEncoder": {
-            "encoding_strategy": hp.choice("encoding_strategy", ["ordinal_strict_feature_shuffled", 
+            "encoding_strategy": hp.choice("encoding_strategy", ["ordinal_strict_feature_shuffled",
                                                                  "ordinal",
                                                                  "ordinal_strict_feature_shuffled",
                                                                  "ordinal_shuffled",
                                                                  "onehot",
                                                                  "numeric",
-                                                                 "none",]),
+                                                                 "none", ]),
         },
         "FeatureShuffler": {
             "mode": hp.choice("mode", ["shuffle", "rotate"])
         },
         "FingerprintFeatureEncoder": hp.choice("FingerprintFeatureEncoder", [True, False]),
-        "PolynomialInteractionGenerator":{
+        "PolynomialInteractionGenerator": {
             "max_interaction_features": hp.choice("max_interaction_features", [None, 50])
         },
         "retrieval_config": {
@@ -217,7 +217,7 @@ def sample_inferece_params(rng:np.random.Generator, sample_num:int=2, repeat_num
         search_space["PolynomialInteractionGenerator"] = {
             "max_interaction_features": hp.choice("max_interaction_features", [None, 50])
         }
-    
+
     base_search_space = {
         "softmax_temperature": hp.choice("softmax_temperature", [0.75, 0.8, 0.9, 0.95, 1.0]),
         "seed": hp.uniformint("seed", 0, 1000000)
@@ -233,6 +233,7 @@ def sample_inferece_params(rng:np.random.Generator, sample_num:int=2, repeat_num
 
     return hyperopt_configs, base_config
 
+
 class NonPaddingDistributedSampler(DistributedSampler):
     def __init__(self, dataset, num_replicas=None, rank=None, shuffle=False):
         super().__init__(dataset, num_replicas=num_replicas, rank=rank, shuffle=shuffle)
@@ -243,6 +244,7 @@ class NonPaddingDistributedSampler(DistributedSampler):
         indices = list(range(len(self.dataset)))
         indices = indices[self.rank:self.total_size:self.num_replicas]
         return iter(indices)
+
 
 def swap_rows_back(tensor, indices):
     """
@@ -258,6 +260,36 @@ def swap_rows_back(tensor, indices):
     for i, idx in enumerate(indices):
         inverse_indices[idx] = i
     return tensor[inverse_indices]
+
+
+def simple_inference(model: torch.nn.Module,trainX: torch.Tensor | np.ndarray, trainy: torch.Tensor | np.ndarray,
+                     testX: torch.Tensor | np.ndarray, task_type: Literal["reg", "cls", "emb"] = "cls",
+                     device: torch.device | str = "cuda",
+                     return_all_information: bool = False):
+    if isinstance(trainX, np.ndarray):
+        trainX = torch.from_numpy(trainX).float().to(device)
+    if isinstance(trainy, np.ndarray):
+        trainy = torch.from_numpy(trainy).float().to(device)
+    if isinstance(testX, np.ndarray):
+        testX = torch.from_numpy(testX).float().to(device)
+    model.eval()
+    model.to(device)
+    trainX=fix_data_shape(trainX,data_type="feature")
+    testX=fix_data_shape(testX,data_type="feature")
+    trainy=fix_data_shape(trainy,data_type="label")
+    x_=torch.cat([trainX,testX],dim=1)
+    y_=trainy
+    with (
+        torch.autocast(torch.device("cuda").type, enabled=True),
+        torch.inference_mode(),
+    ):
+        output = model(x=x_, y=y_, eval_pos=y_.shape[1],
+                       task_type=task_type,
+                       return_all_information=return_all_information)
+        if torch.is_tensor(output):
+            if len(output.shape) == 3:
+                output = output.view(-1, output.shape[-1])
+    return output
 
 if __name__ == "__main__":
     args = init_args()

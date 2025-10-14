@@ -1,5 +1,8 @@
 import optuna
 from typing import Literal
+
+from sklearn.metrics import f1_score
+
 from retrieval_extension.retrieval_search_space.init_search_space import generate_search_space
 import numpy as np
 import torch
@@ -29,15 +32,19 @@ class RetrievalSearchHyperparameters:
 
     def optuna_inference(self,trial,method,metric:Literal["AUC","accuracy","f1"]="accuracy"):
         param=generate_search_space(trial,self.args)
-        output = method.inference(self.trainX, self.trainy, self.testX, attention_score=self.attention_score,**param)
+        output = method.inference(self.trainX, self.trainy, self.testX, attention_score=self.attention_score,device_id=self.args["device_id"],**param)
         output = output[:, :len(np.unique(self.trainy))].float()
         outputs = torch.nn.functional.softmax(output, dim=1)
 
         output = outputs.float().cpu().numpy()
         prediction_ = output / output.sum(axis=1, keepdims=True)
-        roc = auc_metric(self.testy, prediction_)
+        if metric=="AUC":
+            return float(auc_metric(self.testy, prediction_))
+        elif metric=="accuracy":
+            return float(np.mean(np.argmax(output, axis=1) == self.testy))
+        elif metric=="f1":
+            return float(f1_score(self.testy, np.argmax(output, axis=1), average='weighted'))
 
-        return float(roc)
 
 
 

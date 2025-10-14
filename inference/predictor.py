@@ -366,7 +366,7 @@ class LimiXPredictor:
                     y_ = y_train_[idx]
                     x_ = torch.cat([x_, testX[idx].unsqueeze(0)], dim=0).to(self.model.device).unsqueeze(0)
                     relabel = RelabelRetrievalY(y_.unsqueeze(-1))
-                    y_ = relabel.transform_y().squeeze(-1)
+                    y_ = relabel.transform_y().to(self.model.device).squeeze(-1)
                     with (
                         torch.autocast(torch.device("cuda").type, enabled=True),
                         torch.inference_mode(),

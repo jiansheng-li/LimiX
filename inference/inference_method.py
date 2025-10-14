@@ -93,8 +93,9 @@ class InferenceResultWithRetrieval:
                   cluster_method: str = "overlap",
                   use_threshold: bool = False,
                   threshold: float = 0.5,
-                  mixed_method: str = "max"
+                  mixed_method: str = "max",device_id: int = 0
                   ):
+        device = torch.device(f"cuda:{device_id}")
         if isinstance(X_train, np.ndarray):
             X_train = torch.from_numpy(X_train).float()
         if isinstance(y_train, np.ndarray):
@@ -134,7 +135,7 @@ class InferenceResultWithRetrieval:
             y_train = [y_train[x_iter] for x_iter in cluster_train_sample_indices.values()]
             X_test = [X_test[x_iter] for x_iter in cluster_test_sample_indices.values()]
 
-            device=torch.device("cuda")
+
             model = self.model.to(device)
             outputs = []
             total_indice = []
@@ -150,9 +151,9 @@ class InferenceResultWithRetrieval:
                 x_ = torch.cat([X_train_, X_test_], dim=0).to(device).unsqueeze(0)
                 if task_type == "cls":
                     relabel = RelabelRetrievalY(y_.unsqueeze(-1))
-                    y_ = relabel.transform_y().squeeze(-1)
+                    y_ = relabel.transform_y().squeeze(-1).to(device)
                 with (
-                    torch.autocast(torch.device("cuda").type, enabled=True),
+                    torch.autocast(device.type, enabled=True),
                     torch.inference_mode(),
                 ):
                     output = model(x=x_, y=y_, eval_pos=y_.shape[1],
@@ -214,7 +215,7 @@ class InferenceResultWithRetrieval:
                         x_ = torch.cat([X_train, X_test], dim=1)
                         if task_type == "cls":
                             relabel = RelabelRetrievalY(y_)
-                            y_ = relabel.transform_y()
+                            y_ = relabel.transform_y().to(device)
                         output = model(x=x_, y=y_.squeeze(-1), eval_pos=y_.shape[1], task_type=task_type)
                         if len(output.shape) == 3:
                             output = output.view(-1, output.shape[-1])
@@ -290,7 +291,7 @@ class InferenceAttentionMap:
         if isinstance(X_train, np.ndarray):
             X_train = torch.from_numpy(X_train).float()
         if isinstance(y_train, np.ndarray):
-            y_train = torch.from_numpy(y_train).float()
+            y_train = torch.from_numpy(y_train)
         if isinstance(X_test, np.ndarray):
             X_test = torch.from_numpy(X_test).float()
         dataset = self._prepare_data(X_train, y_train, X_test)
@@ -405,11 +406,11 @@ class InferenceAttentionMap:
         if isinstance(X_train, np.ndarray):
             X_train = torch.from_numpy(X_train).float()
         if isinstance(y_train, np.ndarray):
-            y_train = torch.from_numpy(y_train).float()
+            y_train = torch.from_numpy(y_train)
         if isinstance(X_test, np.ndarray):
             X_test = torch.from_numpy(X_test).float()
 
-        with(torch.autocast('cuda', enabled=True), torch.inference_mode()):
+        with(torch.autocast(device.type, enabled=True), torch.inference_mode()):
             x_ = torch.cat([X_train, X_test], dim=0).unsqueeze(dim=0).to(device)
             y_ = y_train.unsqueeze(0).to(device)
 
@@ -419,4 +420,4 @@ class InferenceAttentionMap:
             torch.cuda.empty_cache()
 
         torch.cuda.empty_cache()
-        return feature_attention[y_.shape[1]:], sample_attention
+        return feature_attention[y_.shape[1]:] if feature_attention is not None else None, sample_attention if sample_attention is not None else None
