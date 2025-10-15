@@ -3,7 +3,7 @@ import torch
 from model.transformer import FeaturesTransformer
 
 
-def load_model(model_path,calculate_sample_attention:bool=False,calculate_feature_attention:bool=False,mask_prediction:bool=False):
+def load_model(model_path, mask_prediction: bool = False):
     state_dict = torch.load(model_path, map_location="cpu", weights_only=False)
     config = state_dict['config']
     model = FeaturesTransformer(
@@ -21,9 +21,7 @@ def load_model(model_path,calculate_sample_attention:bool=False,calculate_featur
         layer_norm_eps=config.get('layer_norm_eps', 1e-5),
         device=None,
         dtype=None,
-        recompute_attn=config['recompute_attn'],
-        calculate_sample_attention=calculate_sample_attention,
-        calculate_feature_attention=calculate_feature_attention
+        recompute_attn=config['recompute_attn']
     )
     model.load_state_dict(state_dict['state_dict'])
 

@@ -173,26 +173,10 @@ if __name__ == '__main__':
             }
 
             model=load_model(model_path)
-            embedding = simple_inference(model, trainX, trainy, testX, "emb").clone().detach().cpu().numpy()
 
-
-            inference_attention = InferenceAttentionMap(model_path=model_path, calculate_feature_attention=False,
-                                                        calculate_sample_attention=True)
-            feature_attention_score, sample_attention_score = inference_attention.inference_on_single_gpu(trainX,
-                                                                                                          trainy, testX,
-                                                                                                          task_type='cls')
-            calculate_attention_score = SubSampleData("sample", "only_sample")
-            calculate_attention_score.fit(feature_attention_score=feature_attention_score,
-                                          sample_attention_score=sample_attention_score, )
-            attention_score = calculate_attention_score.transform()
-            top_k_indices = find_top_K_indice(attention_score, threshold=0.85, mixed_method="max",
-                                              retrieval_len=200)
-            cluster_train_sample_indices, cluster_test_sample_indices = cluster_test_data(top_k_indices,
-                                                                                          20,
-                                                                                          cluster_method="overlap")
             save_path=f"{args.save_name}"
             os.makedirs(save_path,exist_ok=True)
-            fig, ax = plt.subplots(figsize=(10, 8))
+
             colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f',
                       '#bcbd22', '#17becf']
             color_map = {label: colors[i] for i, label in enumerate(np.unique(trainy))}
@@ -200,56 +184,59 @@ if __name__ == '__main__':
             test_marker = '^'  # 未选中的点
             select_edge="black"
             unselect_edge="white"
-            tsne = TSNE(n_components=2,
-                        perplexity=min(30, len(trainy) // 2),
-                        random_state=42,
-                        init='pca',
-                        learning_rate='auto',
-                        n_iter=1000)
-            X_tsne = tsne.fit_transform(embedding[:len(trainy)])
-
-            for label in np.unique(trainy):
-                mask = trainy == label
-                indices_for_label = np.arange(len(trainy))[mask]
-                if len(indices_for_label) > 0:
-                    ax.scatter(X_tsne[:, 0][indices_for_label],
-                               X_tsne[:, 1][indices_for_label],
-                               c=[color_map[label]],
-                               s=30,
-                               alpha=0.9,
-                               marker=train_marker,
-                               edgecolors=select_edge,
-                               linewidth=0.8,
-                               label=f'Selected Train Label {label}')
-            ax.legend(loc='upper right', fontsize=8, ncol=2)
-            plt.tight_layout()
-            plt.savefig(os.path.join(save_path, f"{folder}_train_original.png"))
-            plt.close()
-            fig, ax = plt.subplots(figsize=(10, 8))
-            tsne = TSNE(n_components=2,
-                        perplexity=min(30, len(testy) // 2),
-                        random_state=42,
-                        init='pca',
-                        learning_rate='auto',
-                        n_iter=1000)
-            X_tsne = tsne.fit_transform(embedding[len(trainy):])
-            for label in np.unique(trainy):
-                mask = testy == label
-                indices_for_label = np.arange(len(testy))[mask]
-                if len(indices_for_label) > 0:
-                    ax.scatter(X_tsne[:, 0][indices_for_label],
-                               X_tsne[:, 1][indices_for_label],
-                               c=[color_map[label]],
-                               s=30,
-                               alpha=0.9,
-                               marker=test_marker,
-                               edgecolors=select_edge,
-                               linewidth=0.8,
-                               label=f'Selected Test Label {label}')
-            ax.legend(loc='upper right', fontsize=8, ncol=2)
-            plt.tight_layout()
-            plt.savefig(os.path.join(save_path, f"{folder}_test_original.png"))
-            plt.close()
+            for layer in range(12):
+                for sublayer in [1,3,5]:
+                    embedding = simple_inference(model, trainX, trainy, trainX, "emb",return_layer_idx=layer,return_sublayer_idx=sublayer).clone().detach().cpu().numpy()
+                    tsne = TSNE(n_components=2,
+                                perplexity=min(30, len(trainy) // 2),
+                                random_state=42,
+                                init='pca',
+                                learning_rate='auto',
+                                n_iter=1000)
+                    X_tsne = tsne.fit_transform(embedding[:len(trainy)])
+                    fig, ax = plt.subplots(figsize=(10, 8))
+                    for label in np.unique(trainy):
+                        mask = trainy == label
+                        indices_for_label = np.arange(len(trainy))[mask]
+                        if len(indices_for_label) > 0:
+                            ax.scatter(X_tsne[:, 0][indices_for_label],
+                                       X_tsne[:, 1][indices_for_label],
+                                       c=[color_map[label]],
+                                       s=30,
+                                       alpha=0.9,
+                                       marker=train_marker,
+                                       edgecolors=select_edge,
+                                       linewidth=0.8,
+                                       label=f'Selected Train Label {label}')
+                    ax.legend(loc='upper right', fontsize=8, ncol=2)
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(save_path, f"{folder}_train_sublayer_{sublayer}_layer_{layer}.png"))
+                    plt.close()
+                    fig, ax = plt.subplots(figsize=(10, 8))
+                    tsne = TSNE(n_components=2,
+                                perplexity=min(30, len(testy) // 2),
+                                random_state=42,
+                                init='pca',
+                                learning_rate='auto',
+                                n_iter=1000)
+                    X_tsne = tsne.fit_transform(embedding[len(trainy):])
+                    for label in np.unique(trainy):
+                        mask = trainy == label
+                        indices_for_label = np.arange(len(trainy))[mask]
+                        if len(indices_for_label) > 0:
+                            ax.scatter(X_tsne[:, 0][indices_for_label],
+                                       X_tsne[:, 1][indices_for_label],
+                                       c=[color_map[label]],
+                                       s=30,
+                                       alpha=0.9,
+                                       marker=test_marker,
+                                       edgecolors=select_edge,
+                                       linewidth=0.8,
+                                       label=f'Selected Test Label {label}')
+                    ax.legend(loc='upper right', fontsize=8, ncol=2)
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(save_path, f"{folder}_test_sublayer_{sublayer}_layer_{layer}.png"))
+                    plt.close()
 
 
 
@@ -258,7 +245,7 @@ if __name__ == '__main__':
             #     train_indices = cluster_train_sample_indices[i]
             #     test_indices = cluster_test_sample_indices[i]
             #     train_remain_indices = np.setdiff1d(np.arange(len(trainX)), train_indices)
-            #     test_remain_indices = np.setdiff1d(np.arange(len(testX)), test_indices)
+            #     test_remain_indices = np.setdiff1d(np.arange(len(trainX)), test_indices)
             #     tsne = TSNE(n_components=2,
             #                 perplexity=min(30, len(train_indices) // 2),
             #                 random_state=42,
@@ -325,7 +312,7 @@ if __name__ == '__main__':
                 #             n_iter=1000)
                 # X_tsne = tsne.fit_transform(embedding[test_indices])
                 # for label in np.unique(trainy):
-                #     mask = testy[test_indices] == label
+                #     mask = trainy[test_indices] == label
                 #     indices_for_label = np.arange(len(test_indices))[mask]
                 #     if len(indices_for_label) > 0:
                 #         ax.scatter(X_tsne[:, 0],

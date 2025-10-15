@@ -172,7 +172,8 @@ if __name__ == '__main__':
                 'num_class': len(np.unique(trainy)),
             }
             model = load_model(model_path)
-            res=simple_inference(model, trainX, trainy, testX, return_all_information=True)
+
+
             # origin_output=res["cls_output_ori_context"].squeeze(0)
             #
             # output = origin_output[:trainy.shape[0], :len(np.unique(trainy))].float()
@@ -182,25 +183,32 @@ if __name__ == '__main__':
             # prediction_ = output / output.sum(axis=1, keepdims=True)
             # roc = auc_metric(trainy, prediction_)
             # print(f"original roc: {roc}")
-            transformer_ouput = res["cls_output_all"].squeeze(0)
-            output = transformer_ouput[:trainy.shape[0], :len(np.unique(trainy))].float()
-            outputs = torch.nn.functional.softmax(output, dim=1)
 
-            output = outputs.float().cpu().numpy()
-            prediction_ = output / output.sum(axis=1, keepdims=True)
-            roc = auc_metric(trainy, prediction_)
-            print(f"transformer train roc: {roc}")
-            rst["context_AUC"]=float(roc)
-            transformer_ouput = res["cls_output_all"].squeeze(0)
-            output = transformer_ouput[trainy.shape[0]:, :len(np.unique(trainy))].float()
-            outputs = torch.nn.functional.softmax(output, dim=1)
-
-            output = outputs.float().cpu().numpy()
-            prediction_ = output / output.sum(axis=1, keepdims=True)
-            roc = auc_metric(testy, prediction_)
-            print(f"transformer test roc: {roc}")
-            rst["test_AUC"]=float(roc)
-
+            """
+            base context inference
+            """
+            # res = simple_inference(model, trainX, trainy, testX, return_all_information=True)
+            # transformer_ouput = res["cls_output_all"].squeeze(0)
+            # output = transformer_ouput[:trainy.shape[0], :len(np.unique(trainy))].float()
+            # outputs = torch.nn.functional.softmax(output, dim=1)
+            #
+            # output = outputs.float().cpu().numpy()
+            # prediction_ = output / output.sum(axis=1, keepdims=True)
+            # roc = auc_metric(trainy, prediction_)
+            # print(f"transformer train roc: {roc}")
+            # rst["context_AUC"]=float(roc)
+            # transformer_ouput = res["cls_output_all"].squeeze(0)
+            # output = transformer_ouput[trainy.shape[0]:, :len(np.unique(trainy))].float()
+            # outputs = torch.nn.functional.softmax(output, dim=1)
+            #
+            # output = outputs.float().cpu().numpy()
+            # prediction_ = output / output.sum(axis=1, keepdims=True)
+            # roc = auc_metric(testy, prediction_)
+            # print(f"transformer test roc: {roc}")
+            # rst["test_AUC"]=float(roc)
+            """
+            retrieval context inference
+            """
 
 
 
@@ -217,7 +225,8 @@ if __name__ == '__main__':
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         result=pd.DataFrame(rsts)
-        result.to_csv(os.path.join(args.save_name,"new_rsts.csv"),index=False)
+        if not args.debug:
+            result.to_csv(os.path.join(args.save_name,"rsts.csv"),index=False)
 
 
 

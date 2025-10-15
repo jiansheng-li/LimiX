@@ -93,7 +93,7 @@ class InferenceResultWithRetrieval:
                   cluster_method: str = "overlap",
                   use_threshold: bool = False,
                   threshold: float = 0.5,
-                  mixed_method: str = "max",device_id: int = 0
+                  mixed_method: str = "max", device_id: int = 0
                   ):
         device = torch.device(f"cuda:{device_id}")
         if isinstance(X_train, np.ndarray):
@@ -119,22 +119,24 @@ class InferenceResultWithRetrieval:
                 cluster_num = len(torch.unique(y_train))
 
             if use_threshold:
+                print("begin thresholding")
                 top_k_indices = find_top_K_indice(attention_score, threshold=threshold, mixed_method=mixed_method,
                                                   retrieval_len=self.retrieval_len)
+                print(f"finished thresholding, top_k_indices shape: {top_k_indices.shape}")
             else:
                 # use retrieval len
                 top_k_indices = torch.argsort(attention_score)[:, -min(self.retrieval_len, X_train.shape[0]):].to(
                     "cuda")
 
             cluster_num = min(cluster_num, len(top_k_indices))
-
+            print(f"begin clustering, cluster_num: {cluster_num}")
             cluster_train_sample_indices, cluster_test_sample_indices = cluster_test_data(top_k_indices,
                                                                                           cluster_num,
                                                                                           cluster_method=cluster_method)
+            print("finished clustering")
             X_train = [X_train[x_iter] for x_iter in cluster_train_sample_indices.values()]
             y_train = [y_train[x_iter] for x_iter in cluster_train_sample_indices.values()]
             X_test = [X_test[x_iter] for x_iter in cluster_test_sample_indices.values()]
-
 
             model = self.model.to(device)
             outputs = []
@@ -247,20 +249,17 @@ class InferenceResultWithRetrieval:
             return outputs.squeeze(0)
 
 
-
-
-
-
 class InferenceAttentionMap:
     def __init__(self,
-                 model_path: str,
+                 model_path: str | torch.nn.Module,
                  calculate_feature_attention: bool = False,
                  calculate_sample_attention: bool = False,
                  ):
         self.calculate_feature_attention = calculate_feature_attention
         self.calculate_sample_attention = calculate_sample_attention
-        self.model = load_model(model_path, calculate_feature_attention=calculate_feature_attention,
-                                calculate_sample_attention=calculate_sample_attention)
+        if isinstance(model_path, str):
+            model = load_model(model_path)
+        self.model = model_path
 
         self.dataset = None
 
@@ -320,7 +319,9 @@ class InferenceAttentionMap:
             y_ = y_train.unsqueeze(0)
             with(torch.autocast('cuda', enabled=True), torch.inference_mode()):
                 output, feature_attention, sample_attention = model(x=x_, y=y_, eval_pos=y_.shape[1],
-                                                                    task_type=task_type)
+                                                                    task_type=task_type,
+                                                                    calculate_feature_attention=self.calculate_feature_attention,
+                                                                    calculate_sample_attention=self.calculate_sample_attention)
             if self.calculate_sample_attention:
                 local_sample_attention.append(sample_attention.permute(1, 0, 2))
             if self.calculate_feature_attention:
@@ -415,9 +416,12 @@ class InferenceAttentionMap:
             y_ = y_train.unsqueeze(0).to(device)
 
             output, feature_attention, sample_attention = model(x=x_, y=y_, eval_pos=y_.shape[1],
-                                                                task_type=task_type)
+                                                                task_type=task_type,
+                                                                calculate_feature_attention=self.calculate_feature_attention,
+                                                                calculate_sample_attention=self.calculate_sample_attention)
             gc.collect()
             torch.cuda.empty_cache()
 
         torch.cuda.empty_cache()
-        return feature_attention[y_.shape[1]:] if feature_attention is not None else None, sample_attention if sample_attention is not None else None
+        return feature_attention[y_.shape[
+                                     1]:] if feature_attention is not None else None, sample_attention if sample_attention is not None else None

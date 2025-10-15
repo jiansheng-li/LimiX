@@ -265,7 +265,7 @@ def swap_rows_back(tensor, indices):
 def simple_inference(model: torch.nn.Module,trainX: torch.Tensor | np.ndarray, trainy: torch.Tensor | np.ndarray,
                      testX: torch.Tensor | np.ndarray, task_type: Literal["reg", "cls", "emb"] = "cls",
                      device: torch.device | str = "cuda",
-                     return_all_information: bool = False):
+                     return_all_information: bool = False,**kwargs):
     if isinstance(trainX, np.ndarray):
         trainX = torch.from_numpy(trainX).float().to(device)
     if isinstance(trainy, np.ndarray):
@@ -285,7 +285,7 @@ def simple_inference(model: torch.nn.Module,trainX: torch.Tensor | np.ndarray, t
     ):
         output = model(x=x_, y=y_, eval_pos=y_.shape[1],
                        task_type=task_type,
-                       return_all_information=return_all_information)
+                       return_all_information=return_all_information,**kwargs)
         if torch.is_tensor(output):
             if len(output.shape) == 3:
                 output = output.view(-1, output.shape[-1])
