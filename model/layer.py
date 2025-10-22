@@ -591,6 +591,6 @@ class LayerStack(nn.Module):
         for idx, layer in enumerate(self.layers):
             kwargs["layer_idx"] = idx
             x, feature_attention, sample_attention = layer(x, **kwargs)
-            if idx == kwargs["return_layer_idx"]:
+            if idx == kwargs.get("return_layer_idx", 11):
                 return x, feature_attention, sample_attention
         return x, feature_attention, sample_attention

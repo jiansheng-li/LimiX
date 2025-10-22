@@ -139,7 +139,7 @@ class Dist(object):
         # !!! Only works if adjacency matrix is upper triangular !!!
         for i in range(0, self.d * self.features_per_node, self.features_per_node):
             parents = np.nonzero(self.adjacency[:, i // self.features_per_node])[0]
-            X[:, i:i + self.features_per_node] = noise[:, i:i + self.features_per_node]
+            # X[:, i:i + self.features_per_node] = noise[:, i:i + self.features_per_node]
             parents = [[parentN for parentN in range(parent * self.features_per_node,
                                                      parent * self.features_per_node + self.features_per_node)] for
                        parent in parents]
@@ -155,8 +155,12 @@ class Dist(object):
                     assignment = MLPFunction(self.function_params, features_per_node=self.features_per_node)
 
                 X_par = X[:, parents].view(n, -1)
-                X[:, i:i + self.features_per_node] += torch.tensor(assignment(X_par))  # Additive noise model
-
+                X[:, i:i + self.features_per_node] += (torch.ones_like(noise[:, i:i + self.features_per_node]) - noise[
+                                                                                                                 :,
+                                                                                                                 i:i + self.features_per_node]) * torch.tensor(
+                    assignment(X_par))  # Additive noise model
+            else:
+                X[:, i:i + self.features_per_node] = noise[:, i:i + self.features_per_node]
         return X
 
 
@@ -374,7 +378,7 @@ def generate_datasets(d, s0, N, n_datasets,
         y_train_discrete, class_boundries_train = class_assigner(y[:train_idx])
         y_test_discrete, class_boundries = class_assigner(y[train_idx:], class_boundries_train)
         y_discrete = torch.cat(((y_train_discrete, y_test_discrete)))
-
+        # y_discrete=y
         x = torch.cat((data[:, :y_idx], data[:, y_idx + features_per_node:]), dim=1)
         # perm = torch.randperm(x.size(1))
         # x_permuted = x[:, perm]

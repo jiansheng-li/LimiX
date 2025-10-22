@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 from tqdm import tqdm
 
-from utils.data_utils import TabularInferenceDataset, cluster_test_data
+from utils.data_utils import TabularInferenceDataset, cluster_test_data, fix_data_shape
 from utils.inference_utils import NonPaddingDistributedSampler, swap_rows_back
 from utils.loading import load_model
 
@@ -258,8 +258,9 @@ class InferenceAttentionMap:
         self.calculate_feature_attention = calculate_feature_attention
         self.calculate_sample_attention = calculate_sample_attention
         if isinstance(model_path, str):
-            model = load_model(model_path)
-        self.model = model_path
+            self.model = load_model(model_path)
+        else:
+            self.model = model_path
 
         self.dataset = None
 
@@ -411,9 +412,12 @@ class InferenceAttentionMap:
         if isinstance(X_test, np.ndarray):
             X_test = torch.from_numpy(X_test).float()
 
+        X_train = fix_data_shape(X_train, data_type="feature")
+        X_test = fix_data_shape(X_test, data_type="feature")
+        y_train = fix_data_shape(y_train, data_type="label")
         with(torch.autocast(device.type, enabled=True), torch.inference_mode()):
-            x_ = torch.cat([X_train, X_test], dim=0).unsqueeze(dim=0).to(device)
-            y_ = y_train.unsqueeze(0).to(device)
+            x_ = torch.cat([X_train, X_test], dim=1).to(device)
+            y_ = y_train.to(device)
 
             output, feature_attention, sample_attention = model(x=x_, y=y_, eval_pos=y_.shape[1],
                                                                 task_type=task_type,

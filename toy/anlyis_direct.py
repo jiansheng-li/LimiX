@@ -1,32 +1,71 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-#
-# Filename: inference_kaggle.py
-# Author: haoyuan
-# Created: 2025-04-15
-# Description: This is a simple Python script with header information.
-# python inference_dataset100.py --model_path '/mnt/public/auto_inference/gen_703_cls5_diri0.001_proto0.5_0419_2202/prior_diff_real_checkpoint_n_0_epoch_965.cpkt' --gpuID 0 --data_dir '/root/datasets/dataset100/'
 import os
+import sys
 
+
+
+sys.path.insert(0,"/mnt/public/jianshengli/LimiX-extension/")
+print(sys.path)
 import networkx as nx
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
 import seaborn as sns
-from ER_causal_data_gen import generate_data, generate_datasets
+from toy.ER_causal_data_gen import generate_datasets
 from inference.inference_method import InferenceAttentionMap, setup
 from utils.loading import load_model
+from utils.inference_utils import auc_metric, simple_inference
 
+def duplicate_tensor_columns(tensor, n=None):
+    """
+    复制PyTorch tensor的每一列，在每一列后面紧跟着复制该列
+
+    参数:
+    tensor: PyTorch tensor (2D)
+    n: 要复制的前n列，如果为None则复制所有列（除了最后一列）
+
+    返回:
+    复制后的tensor
+    """
+    if tensor.numel() == 0 or tensor.dim() != 2:
+        return tensor
+
+    num_cols = tensor.shape[1]
+
+
+
+
+    # 提取需要复制的列
+    cols_to_duplicate = tensor[:, :]
+
+
+
+    # 创建复制列
+    duplicated_cols = cols_to_duplicate.clone()  # 使用clone()复制tensor
+
+    # 将原始列和复制列交替排列
+    result_cols = []
+    for i in range(num_cols):
+        result_cols.append(cols_to_duplicate[:, i:i + 1])  # 原始列
+        result_cols.append(duplicated_cols[:, i:i + 1])  # 复制列
+
+    # 将处理后的列与最后一列合并
+    if len(result_cols) > 0:
+        duplicated_part = torch.cat(result_cols, dim=1)
+
+
+
+    return duplicated_part
 # 在参数解析部分添加新的参数
 if __name__ == '__main__':
     model_path = "/mnt/public/jianshengli/Limix/LimiX-16M.ckpt"
     model = load_model(model_path=model_path).to("cuda")
 
 
-    features_per_node=2
-    datasets=generate_datasets(15, 20, 2000,n_datasets=1,features_per_node=features_per_node,function_type="MLP")
+    features_per_node=1
+    datasets=generate_datasets(8, 10, 2000,n_datasets=1,features_per_node=features_per_node,function_type="MLP",noise_std=0.1)
     X_full=datasets[0][1].to("cuda").squeeze()
     y_full=datasets[0][2].to("cuda").squeeze()
+    X_full=duplicate_tensor_columns(X_full)
     adjacency=datasets[0][3]
     y_idx=datasets[0][4]
 
@@ -42,13 +81,20 @@ if __name__ == '__main__':
 
     inference_attention = InferenceAttentionMap(model_path=model_path, calculate_feature_attention=True,
                                                 calculate_sample_attention=True)
-    feature_attention_score, sample_attention_score = inference_attention.inference_on_single_gpu(X_full[0:1600], y_full[0:1600], X_full[1600:])
+    feature_attention_score, sample_attention_score = inference_attention.inference_on_single_gpu(X_full[0:1600], y_full[0:1600], X_full[1600:],"cls")
     plt.figure(figsize=(8, 4.2))
     feature_attention_score=feature_attention_score[:,-1,:]
     feature_attention_score=torch.cat((feature_attention_score[:,:y_idx],feature_attention_score[:,-1:],feature_attention_score[:,y_idx:-1]),dim=1)
     heatmap = sns.heatmap(feature_attention_score.cpu(), annot=False, fmt=".2f", cmap='YlGnBu',
                           cbar_kws={'label': 'Value'})
-    plt.savefig(f"demo_showcase.pdf",format="pdf",dpi=450,bbox_inches='tight', pad_inches=0)
+    output=simple_inference(model, X_full[0:1600], y_full[0:1600], X_full[1600:],"cls")
+    output = output[:1600, :2].float()
+    outputs = torch.nn.functional.softmax(output, dim=1)
+    #
+    output = outputs.float().cpu().numpy()
+    prediction_ = output / output.sum(axis=1, keepdims=True)
+    auc= auc_metric(y_full[1600:].cpu().numpy(), prediction_)
+    plt.savefig(f"demo_showcase_{auc}.png",dpi=450,bbox_inches='tight', pad_inches=0)
     plt.close()
     #
     exit()

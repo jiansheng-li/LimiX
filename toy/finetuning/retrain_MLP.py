@@ -1,4 +1,7 @@
 import sys
+
+from torch import nn, optim
+
 sys.path.insert(0,'/mnt/public/jianshengli/LimiX-extension')
 
 
@@ -166,18 +169,43 @@ if __name__ == '__main__':
                 'num_class': len(np.unique(trainy)),
             }
             model=load_model(model_path)
-            embedding=simple_inference(model,trainX, trainy, testX, "emb")
+            twoLayerMLP = TwoLayerMLP(192, 768, 10).to("cuda")
+            criterion = nn.CrossEntropyLoss()
+            optimizer = optim.Adam(twoLayerMLP.parameters(), lr=0.001)
+            best_auc = 0.0
+            ori_embedding = simple_inference(model, trainX, trainy, testX, "emb")
 
-            trainX_emb=embedding[:len(trainX),].clone()
-            testX_emb=embedding[len(trainX):,].clone()
-            trainy=torch.tensor(trainy, dtype=torch.long).to("cuda")
-            testy=torch.tensor(testy, dtype=torch.long).to("cuda")
+            trainX_emb = ori_embedding[:len(trainX), ].clone()
+            testX_emb = ori_embedding[len(trainX):, ].clone()
+            teY = torch.tensor(testy, dtype=torch.long).to("cuda")
+            for epoch in range(1000):
+                trX,valX,trY,valy=train_test_split(trainX, trainy, test_size=0.5,stratify=trainy)
+                embedding = simple_inference(model, trX, trY,valX,  "emb")
+                trX_emb = embedding[:len(trX), ].clone()
+                teX_emb = embedding[len(trX):, ].clone()
+                trY = torch.tensor(trY, dtype=torch.long).to("cuda")
+                valy = torch.tensor(valy, dtype=torch.long).to("cuda")
+                outputs = twoLayerMLP(teX_emb)
+                loss = criterion(outputs, valy)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                twoLayerMLP.eval()  # 设置模型为评估模式
+                with torch.no_grad():
 
+                    outputs = twoLayerMLP(testX_emb)
+                    _, predicted = torch.max(outputs.data, 1)
+                    accuracy = (predicted == teY).sum().item() / len(teY)
+                    outputs = torch.softmax(outputs[:, :len(torch.unique(teY))], dim=1)
+                    auc = float(auc_metric(teY.cpu(), outputs.data.cpu()))
+                    print(f'Test Accuracy: {accuracy:.4f}, AUC: {auc:.4f}')
+                    if auc > best_auc:
+                        best_auc = auc
+                if (epoch + 1) % 20 == 0:
+                    print(f'Epoch [{epoch + 1}/{1000}], Loss: {loss.item():.4f}, Test AUC: {best_auc:.4f}')
+                twoLayerMLP.train()
 
-
-            twoLayerMLP=TwoLayerMLP(trainX_emb.shape[1], 768, num_classes).to("cuda")
-            auc=train_and_test_model(twoLayerMLP,trainX_emb,trainy,testX_emb,testy)
-            rst["auc"]=auc
+            rst["auc"]=best_auc
             rsts.append(rst)
         except Exception as e:
             print(f"Error processing: {e}")

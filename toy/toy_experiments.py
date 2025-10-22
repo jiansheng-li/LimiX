@@ -90,7 +90,7 @@ def compute_ece(y_true, y_prob, n_bins=10):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run LimiX inference')
-    parser.add_argument('--data_dir', type=str, default="/mnt/public/classifier_benchmarks/tabarena_classification",
+    parser.add_argument('--data_dir', type=str, default="/mnt/public/classifier_benchmarks/bcco_106",
                         help='Specify the local storage directory of the dataset')
     parser.add_argument('--save_name', default=None, type=str, help="path to save result")
     parser.add_argument('--debug', default=False, action='store_true', help="debug mode")
@@ -163,7 +163,6 @@ if __name__ == '__main__':
             testX, testy = X_test, y_test
             testX = np.asarray(testX, dtype=np.float32)
             testy = np.asarray(testy, dtype=np.int64)
-            if len(trainX) > 50000: continue
             rst = {
                 'dataset name': folder,
                 'num_data_train': len(trainX),
@@ -187,25 +186,25 @@ if __name__ == '__main__':
             """
             base context inference
             """
-            # res = simple_inference(model, trainX, trainy, testX, return_all_information=True)
-            # transformer_ouput = res["cls_output_all"].squeeze(0)
-            # output = transformer_ouput[:trainy.shape[0], :len(np.unique(trainy))].float()
-            # outputs = torch.nn.functional.softmax(output, dim=1)
+            res = simple_inference(model, trainX, trainy, testX, return_all_information=True)
+            transformer_ouput = res["cls_output_all"].squeeze(0)
+            output = transformer_ouput[:trainy.shape[0], :len(np.unique(trainy))].float()
+            outputs = torch.nn.functional.softmax(output, dim=1)
             #
-            # output = outputs.float().cpu().numpy()
-            # prediction_ = output / output.sum(axis=1, keepdims=True)
-            # roc = auc_metric(trainy, prediction_)
-            # print(f"transformer train roc: {roc}")
-            # rst["context_AUC"]=float(roc)
-            # transformer_ouput = res["cls_output_all"].squeeze(0)
-            # output = transformer_ouput[trainy.shape[0]:, :len(np.unique(trainy))].float()
-            # outputs = torch.nn.functional.softmax(output, dim=1)
-            #
-            # output = outputs.float().cpu().numpy()
-            # prediction_ = output / output.sum(axis=1, keepdims=True)
-            # roc = auc_metric(testy, prediction_)
-            # print(f"transformer test roc: {roc}")
-            # rst["test_AUC"]=float(roc)
+            output = outputs.float().cpu().numpy()
+            prediction_ = output / output.sum(axis=1, keepdims=True)
+            roc = auc_metric(trainy, prediction_)
+            print(f"transformer train roc: {roc}")
+            rst["context_AUC"]=float(roc)
+            transformer_ouput = res["cls_output_all"].squeeze(0)
+            output = transformer_ouput[trainy.shape[0]:, :len(np.unique(trainy))].float()
+            outputs = torch.nn.functional.softmax(output, dim=1)
+
+            output = outputs.float().cpu().numpy()
+            prediction_ = output / output.sum(axis=1, keepdims=True)
+            roc = auc_metric(testy, prediction_)
+            print(f"transformer test roc: {roc}")
+            rst["test_AUC"]=float(roc)
             """
             retrieval context inference
             """

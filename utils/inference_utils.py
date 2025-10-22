@@ -1,4 +1,7 @@
 import argparse
+import sys
+sys.path.insert(0,"/mnt/public/jianshengli/LimiX-extension")
+print(sys.path)
 import json
 import logging
 import os
@@ -10,6 +13,7 @@ import torch
 from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, log_loss
 from torch.utils.data import DistributedSampler
 
+from utils.loading import load_model
 from utils.data_utils import fix_data_shape
 
 
@@ -274,6 +278,7 @@ def simple_inference(model: torch.nn.Module,trainX: torch.Tensor | np.ndarray, t
         testX = torch.from_numpy(testX).float().to(device)
     model.eval()
     model.to(device)
+
     trainX=fix_data_shape(trainX,data_type="feature")
     testX=fix_data_shape(testX,data_type="feature")
     trainy=fix_data_shape(trainy,data_type="label")
@@ -292,5 +297,9 @@ def simple_inference(model: torch.nn.Module,trainX: torch.Tensor | np.ndarray, t
     return output
 
 if __name__ == "__main__":
-    args = init_args()
-    generate_infenerce_config(args)
+
+    model=load_model("/mnt/public/jianshengli/Limix/LimiX-16M.ckpt")
+    trainX=np.random.random((1000,100))
+    trainy=np.random.randint(0,1,size=(1000,))
+    testX=np.random.random((10,100))
+    output=simple_inference(model,trainX,trainy,testX,task_type="cls")

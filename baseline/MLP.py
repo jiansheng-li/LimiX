@@ -48,9 +48,9 @@ def test_model(model, X_test, y_test):
         print(f'Test Accuracy: {accuracy:.4f}, AUC: {auc:.4f}')
     return float(auc)
 
-def train_and_test_model(model, X_train, y_train, X_test, y_test, epochs=1000, lr=0.001):
+def train_and_test_model(model, X_train, y_train, X_test, y_test, epochs=1000, lr=0.0001):
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=lr)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
     best_auc = 0.0
     for epoch in range(epochs):
         # 前向传播
@@ -66,7 +66,7 @@ def train_and_test_model(model, X_train, y_train, X_test, y_test, epochs=1000, l
             outputs = model(X_test)
             _, predicted = torch.max(outputs.data, 1)
             accuracy = (predicted == y_test).sum().item() / len(y_test)
-            outputs = torch.softmax(outputs, dim=1)
+            outputs = torch.softmax(outputs[:,:len(torch.unique(y_test))], dim=1)
             auc = float(auc_metric(y_test.cpu(), outputs.data.cpu()))
             print(f'Test Accuracy: {accuracy:.4f}, AUC: {auc:.4f}')
             if auc > best_auc:
