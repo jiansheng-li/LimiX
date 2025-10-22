@@ -237,6 +237,7 @@ print(f'R2: {r2}')
 # ➤ 链接
  - LimiX(极数)：结构化数据通用大模型：[LimiX:Unleashing Structured-Data Modeling Capability for Generalist Intelligence](https://arxiv.org/abs/2509.03505)
  - LimiX技术报告：[LimiX_Technical_Report.pdf](https://github.com/limix-ldm/LimiX/blob/main/LimiX_Technical_Report.pdf)
+ - Limix 详细使用说明：[访问 Limix 官方文档](https://www.limix.ai/doc/)
  - 平衡、全面、有挑战、跨领域的分类数据集：[bcco_cls](https://huggingface.co/datasets/stableai-org/bcco_cls)
  - 平衡、全面、有挑战、跨领域的回归数据集：[bcco_reg](https://huggingface.co/datasets/stableai-org/bcco_reg)
 
