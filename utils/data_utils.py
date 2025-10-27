@@ -330,9 +330,7 @@ def gpu_kmeans(data, k, max_iters=100, tol=1e-4):
     Returns:
         torch.Tensor: The cluster labels.
     """
-
     n_samples = data.shape[0]
-
     # init centroids
     data_dense = data.to_dense() if data.is_sparse else data
     centroids = data_dense[torch.randperm(n_samples)[:k]]
@@ -355,7 +353,7 @@ def gpu_kmeans(data, k, max_iters=100, tol=1e-4):
     return labels
 
 def fix_data_shape(X:torch.Tensor,data_type:Literal["feature","label"]="feature",batch_size:int=1):
-    assert torch.is_tensor(X), f"X should be torch.Tensor, but got {X.type()}"
+    assert torch.is_tensor(X) or X is None, f"X should be torch.Tensor, but got {X.type()}"
     if batch_size != 1:
         print(f"fix data with batch_size={batch_size}, please confirm the data shape is (batch_size, seq_len, feature_dim) (feature) or (batch_size, seq_len) (label)")
         return X

@@ -33,6 +33,10 @@ def load_model(model_path, mask_prediction: bool = False):
 def load_finetuning_model(model_path,config_path="model_dict.json"):
     state_dict = torch.load(model_path, map_location="cpu", weights_only=False)
     config = state_dict['config']
+    model_dict = json.load(open(config_path, "r"))
+    for key in model_dict.keys():
+        if not model_dict[key]:
+            state_dict['state_dict'][key].requires_grad = False
     model = FeaturesTransformer(
         preprocess_config_x=config['preprocess_config_x'],
         encoder_config_x=config['encoder_config_x'],
@@ -51,9 +55,6 @@ def load_finetuning_model(model_path,config_path="model_dict.json"):
         recompute_attn=config['recompute_attn']
     )
     model.load_state_dict(state_dict['state_dict'])
-    model_dict=json.load(open("model_dict.json","r"))
-    for key in model_dict.keys():
-        if not model_dict[key]:
-            model[key].requires_grad=False
+
     model.train()
     return model

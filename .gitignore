@@ -13,3 +13,9 @@ result/
 .DS_Store
 config
 .idea
+finetune_config
+toy
+run.sh
+answer.md
+demo.py
+run.sh

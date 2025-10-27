@@ -212,7 +212,7 @@ class TabularFinetuneDataset(Dataset):
                     self.y_test.append(y_test)
                 pass
                 #TODO jianshengli Realize fine-tuning for each sample separately
-
+        self.max_steps=len(self.X_train)
 if __name__=="__main__":
     trainX=torch.randn(100000,10)
     trainy=torch.randint(0,2,(100000,))

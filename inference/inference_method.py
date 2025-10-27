@@ -93,7 +93,8 @@ class InferenceResultWithRetrieval:
                   cluster_method: str = "overlap",
                   use_threshold: bool = False,
                   threshold: float = 0.5,
-                  mixed_method: str = "max", device_id: int = 0
+                  mixed_method: str = "max", device_id: int = 0,
+                  **kwargs
                   ):
         device = torch.device(f"cuda:{device_id}")
         if isinstance(X_train, np.ndarray):

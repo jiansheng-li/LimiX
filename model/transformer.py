@@ -3,6 +3,7 @@ import torch.nn as nn
 from model.layer import EncoderBaseLayer, MLP, LayerStack
 from typing import Any, Literal
 from model.encoders import get_x_encoder, get_cls_y_encoder, get_reg_y_encoder, preprocesss_4_x
+from model.tunetable import TuneTables
 
 
 class FeaturesTransformer(nn.Module):
@@ -108,11 +109,11 @@ class FeaturesTransformer(nn.Module):
             kwargs:{return_sublayer_idx: int = 5, return_layer_idx: int = 11}
         '''
         assert x is not None and y is not None, "x and y must not be none"
-        assert eval_pos > 0, "eval_pos must be a positive number"
+        assert eval_pos > 0 or kwargs.get("use_tunetable",False), "eval_pos must be a positive number"
         assert len(x.shape) == 3, "x must be [Batch, seq, Feature]"
         assert len(y.shape) == 2, "y must be [Batch, label]"
         assert eval_pos < x.shape[1] and eval_pos <= y.shape[
-            1], "The split point between train x and test x must be less than the feature dimension of x, and less than or equal to the label dimension of y"
+            1], "The split point between train x and test x must be less than the sample dimension of x, and less than or equal to the sample dimension of y"
 
         batch_size, seq_len, num_feature = x.shape
         x = {'data': x, 'mask': torch.isnan(x).to(torch.int32).to(x.device)}
@@ -173,6 +174,19 @@ class FeaturesTransformer(nn.Module):
 
         if torch.isnan(embedded_y).any():
             raise ValueError("embedded_y contains NaN values; please add a NanEncoder in the encoder")
+
+
+        if kwargs.get("use_tunetable",False):
+            tune_tables=kwargs["tunetable"]
+            x_emb_result, embedded_y = tune_tables(x_emb_result, embedded_y,kwargs.get("only_prompt",False),eval_pos=eval_pos)
+            if kwargs.get("only_prompt",False):
+                nan_y = torch.zeros(size=(1, tune_tables.p, 1)).to(y_type)
+                y_type = torch.cat([nan_y, y_type[:,eval_pos:]], dim=1)
+                eval_pos = tune_tables.p
+            else:
+                eval_pos=eval_pos+tune_tables.p
+                nan_y=torch.zeros(size=(1,tune_tables.p,1)).to(y_type)
+                y_type=torch.cat([nan_y,y_type],dim=1)
 
         embedded_x = self.add_embeddings(x_emb_result)
         embedded_all = torch.cat((embedded_x, embedded_y.unsqueeze(2)), dim=2)
