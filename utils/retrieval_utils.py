@@ -85,7 +85,7 @@ def find_top_K_indice(sample_attention: torch.Tensor | np.ndarray, threshold: fl
             try:
                 num_elements_needed = torch.nonzero(sufficient_indices_mask, as_tuple=True)[0][0].item() + 1
                 if mixed_method == "max":
-                    num_elements_needed = min(max(num_elements_needed, retrieval_len), 10000)#max retrieval sample is 10000
+                    num_elements_needed = min(max(num_elements_needed, retrieval_len), 2000)#max retrieval sample is 2000
                 else:
                     num_elements_needed = min(num_elements_needed, retrieval_len)
             except IndexError:

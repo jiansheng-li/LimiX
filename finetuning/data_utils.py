@@ -106,10 +106,10 @@ class TabularFinetuneDataset(Dataset):
                  X_test: torch.Tensor=None,
                  y_test: torch.Tensor=None,
                  attention_score: np.ndarray = None,
-                 retrieval_len: int = 2000,
-                 use_retrieval: bool = True,
-                 use_cluster: bool = False,
-                 cluster_num: int = None,
+                 retrieval_len: int = 200,
+                 use_retrieval: bool = False,
+                 use_cluster: bool = True,
+                 cluster_num: int = 10,
                  use_threshold: bool = False,
                  mixed_method: str = "max",
                  threshold: float = None
@@ -168,10 +168,10 @@ class TabularFinetuneDataset(Dataset):
                      X_test: torch.Tensor=None,
                      y_test: torch.Tensor=None,
                      attention_score: np.ndarray = None,
-                     train_len: int = 2000,
+                     train_len: int = 200,
                      use_retrieval: bool =False,
-                     use_cluster: bool = False,
-                     cluster_num: int = None,
+                     use_cluster: bool = True,
+                     cluster_num: int = 10,
                      use_threshold: bool = False,
                      mixed_method: str = "max",
                      threshold: float = None
@@ -199,17 +199,19 @@ class TabularFinetuneDataset(Dataset):
                     self.X_test = [X_test[x_iter] for x_iter in cluster_test_sample_indices.values()]
                     self.y_test = [y_test[x_iter] for x_iter in cluster_test_sample_indices.values()]
             else:
-                trainX, trainy = split_data(X_train, y_train, train_len, equal_split_size=True)
-                self.X_train=[]
-                self.y_train=[]
-                self.X_test=[]
-                self.y_test=[]
-                for X,y in zip(trainX,trainy):
-                    X_train,X_test,y_train,y_test=train_test_split(X,y,test_size=0.2,random_state=42)
-                    self.X_train.append(X_train)
-                    self.y_train.append(y_train)
-                    self.X_test.append(X_test)
-                    self.y_test.append(y_test)
+                raise TypeError("use cluster must be True when use_retrieval is True.")
+        else:
+            trainX, trainy = split_data(X_train, y_train, train_len, equal_split_size=True)
+            self.X_train=[]
+            self.y_train=[]
+            self.X_test=[]
+            self.y_test=[]
+            for X,y in zip(trainX,trainy):
+                X_train,X_test,y_train,y_test=train_test_split(X,y,test_size=0.2,random_state=42)
+                self.X_train.append(X_train)
+                self.y_train.append(y_train)
+                self.X_test.append(X_test)
+                self.y_test.append(y_test)
                 pass
                 #TODO jianshengli Realize fine-tuning for each sample separately
         self.max_steps=len(self.X_train)

@@ -33,7 +33,10 @@ class RetrievalSearchHyperparameters:
     def optuna_inference(self,trial,method,metric:Literal["AUC","accuracy","f1","precision"]="accuracy"):
         param=generate_search_space(trial,self.args)
         print(f"current params: {param}")
-        output = method.inference(self.trainX, self.trainy, self.testX, attention_score=self.attention_score,device_id=self.args["device_id"],**param)
+        try:
+            output = method.inference(self.trainX, self.trainy, self.testX, attention_score=self.attention_score,device_id=self.args["device_id"],**param)
+        except:
+            output = method.predict(self.trainX, self.trainy, self.testX, attention_score=self.attention_score,device_id=self.args["device_id"],**param)
         output = output[:, :len(np.unique(self.trainy))].float()
         outputs = torch.nn.functional.softmax(output, dim=1)
 
