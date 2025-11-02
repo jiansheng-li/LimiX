@@ -40,6 +40,7 @@ def generate_search_space(trail, args):
         "threshold": threshold,
         "retrieval_len": sample_ratio,
         "dynamic_ratio": dynamic_ratio,
-        "mixed_method": mixed_method
+        "mixed_method": mixed_method,
+        "sub_feature_ratio": 1
     }
     return param

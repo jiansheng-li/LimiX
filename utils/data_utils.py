@@ -155,10 +155,6 @@ class TabularInferenceDataset(Dataset):
                     top_k_indices = torch.argsort(attention_score)[:, -min(train_len, X_train.shape[0]):]
                 self.X_train = torch.cat([X_train[x_iter].unsqueeze(0) for x_iter in top_k_indices], dim=0)
                 self.y_train = torch.cat([y_train[y_iter].unsqueeze(0) for y_iter in top_k_indices], dim=0).unsqueeze(-1)
-                # all_indice = [find_top_K_class(y_) for y_ in self.y_train]
-                # self.X_train = torch.cat([self.X_train[index][indice].unsqueeze(0) for index, indice in enumerate(all_indice)],dim=0)
-                # self.y_train = torch.cat([self.y_train[index][indice].unsqueeze(0) for index, indice in enumerate(all_indice)],dim=0).unsqueeze(
-                #     -1)
                 self.X_test = X_test
 
         else:
@@ -219,60 +215,88 @@ def cluster_test_data(top_k_indices: torch.Tensor | List[torch.Tensor], k_groups
     index_to_col = {idx.item(): i for i, idx in enumerate(unique_indices)}
 
     # Build sparse binary matrix representation
-    rows = []
-    cols = []
-    data_vals = []
+    max_idx = max(index_to_col.keys()) if index_to_col else 0
+    mapping_array = torch.zeros(max_idx + 1, dtype=torch.float32)
+    for k, v in index_to_col.items():
+        mapping_array[k] = v
 
     if is_list_input:
-        # --- Process List[1D Tensors] ---
-        for i, sample_indices_tensor in enumerate(top_k_indices):  # i is the test sample index
+        all_rows_list = []
+        all_cols_list = []
+
+        for i, sample_indices_tensor in enumerate(top_k_indices):
             k_i = sample_indices_tensor.shape[0]
-            for j in range(k_i):  # j iterates through the indices of the current sample
-                rows.append(i)
-                # Map the actual training index to its column in the binary matrix
-                cols.append(index_to_col[sample_indices_tensor[j].item()])
-                data_vals.append(1)
+            if k_i > 0:
+
+                if sample_indices_tensor.is_cuda:
+                    sample_indices_tensor = sample_indices_tensor.cpu()
+
+                mapped_cols = mapping_array[sample_indices_tensor.long()]
+                all_rows_list.append(torch.full((k_i,), i, dtype=torch.float32))
+                all_cols_list.append(mapped_cols)
+
+        if all_rows_list:
+            all_rows = torch.cat(all_rows_list)
+            all_cols = torch.cat(all_cols_list)
+            data = torch.ones(len(all_rows), dtype=torch.float32,device="cuda")
+
+            indices = torch.stack([all_rows, all_cols]).to("cuda")
+            binary_matrix_sparse = torch.sparse_coo_tensor(
+                indices, data,
+                size=(n_test_samples, len(index_to_col))
+            ).coalesce()
+
+
+        else:
+            indices = torch.empty((2, 0), dtype=torch.float32)
+            data = torch.empty(0, dtype=torch.float32)
+            binary_matrix_sparse= torch.sparse_coo_tensor(
+                indices, data,
+                size=(n_test_samples, len(index_to_col))
+            )
     else:
-        # --- Process single 2D Tensor ---
-        k_fixed = top_k_indices.shape[1]
-        for i in range(n_test_samples):
-            for j in range(k_fixed):
-                rows.append(i)
-                cols.append(index_to_col[top_k_indices[i, j].item()])
-                data_vals.append(1)
+        if top_k_indices.is_cuda:
+            indices_tensor = top_k_indices.cpu()
+        else:
+            indices_tensor = top_k_indices
+
+        n_test_samples, k_fixed = indices_tensor.shape
+
+        flat_indices = indices_tensor.flatten()
+        cols = mapping_array[flat_indices.long()]
+
+        rows = torch.repeat_interleave(
+            torch.arange(n_test_samples, dtype=torch.float32),
+            k_fixed
+        )
+
+        data = torch.ones(n_test_samples * k_fixed, dtype=torch.float32,device="cuda")
+
+        indices = torch.stack([rows, cols]).to("cuda")
+        binary_matrix_sparse = torch.sparse_coo_tensor(
+            indices, data,
+            size=(n_test_samples, len(index_to_col))
+        ).coalesce()
 
     # Create sparse tensor (assuming GPU usage as per original code)
     # Check if we have any data to create the tensor
-    if not rows:
-        # Handle edge case where there are no indices (e.g., empty input or all empty tensors)
-        # Create an empty sparse tensor
-        indices_sparse = torch.empty((2, 0), dtype=torch.long, device="cuda")
-        values_sparse = torch.empty(0, dtype=torch.float, device="cuda")
-        binary_matrix_sparse = torch.sparse_coo_tensor(
-            indices_sparse, values_sparse, (n_test_samples, num_unique), device="cuda"
-        )
-    else:
-        indices_sparse = torch.LongTensor([rows, cols]).to("cuda")
-        values_sparse = torch.FloatTensor(data_vals).to("cuda")
-        binary_matrix_sparse = torch.sparse_coo_tensor(
-            indices_sparse, values_sparse, (n_test_samples, num_unique), device="cuda"
-        )
+
 
     # --- Compute overlap matrix ---
     binary_dense = binary_matrix_sparse.to_dense()
     # Matrix multiplication to get pairwise overlaps (n_test_samples x n_test_samples)
     # This works even if the original "k" was variable, as the dense matrix captures the relationship.
-    overlap_matrix = torch.mm(binary_dense, binary_dense.t())
+    overlap_matrix = torch.mm(binary_dense, binary_dense.t()).to("cuda")
 
     # Adjust diagonal: overlap of a sample with itself
     # For variable k, the self-overlap is the number of indices for that specific sample.
     diag_indices = torch.arange(n_test_samples, device="cuda")
     if is_list_input:
         # Diagonal entry (i,i) should be the count of indices for sample i
-        diag_values = torch.tensor([len(t) for t in top_k_indices], dtype=torch.float, device="cuda")
+        diag_values = torch.tensor([len(t) for t in top_k_indices], dtype=torch.float32, device="cuda")
     else:
         # For fixed k tensor, diagonal is simply k
-        diag_values = torch.full((n_test_samples,), max_train_len, dtype=torch.float, device="cuda")
+        diag_values = torch.full((n_test_samples,), max_train_len, dtype=torch.float32, device="cuda")
 
     overlap_matrix[diag_indices, diag_indices] = diag_values
 

@@ -3,9 +3,6 @@ import torch
 from sklearn.preprocessing import LabelEncoder
 
 
-# from utils.data_utils import TabularInferenceDataset
-
-
 class RelabelRetrievalY:
     def __init__(self, y_train: torch.Tensor):
         """
@@ -120,12 +117,11 @@ def find_top_K_class(X: torch.Tensor, num_class: int = 10):
     all_indices_flat = torch.cat(all_occurrence_indices) if all_occurrence_indices else torch.tensor([])
     return all_indices_flat
 
-
 if __name__ == '__main__':
-    X_train = torch.rand(size=(1000, 20))
-    y_train = torch.randint(low=0, high=2, size=(1000,))
-    X_test = torch.rand(size=(100, 20))
-    attention_score = np.random.rand(100, 1000)
-    find_top_K_indice(torch.tensor(attention_score), threshold=0.9)
-    dataset = TabularInferenceDataset(X_train, y_train, X_test, attention_score, retrieval_len=20, use_retrieval=True,
-                                      use_cluster=True, cluster_num=5)
+    y_train = torch.tensor([[[7],[7],[8], [5]],[[4], [3],[3], [6]]])
+    output = np.array([[0.2, 2, 0.5, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+                       [0.2, 2, 0.5, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]],dtype=np.float32)
+
+    relabel = RelabelRetrievalY(y_train)
+    y_train, label_y = relabel.transform_y()
+    output = relabel.inverse_transform_y(output)
